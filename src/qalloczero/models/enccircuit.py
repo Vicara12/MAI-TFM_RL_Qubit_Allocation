@@ -1,81 +1,100 @@
-from typing import Tuple, List
+from typing import Dict, Tuple
 import torch
-from math import log
-from torch_geometric.nn import GCNConv
-from torch_geometric.data import Data, Batch
-from torch_geometric.utils import dense_to_sparse
-from utils.customtypes import Hardware, Circuit
-from utils.circuitutils import getCircuitMatrices2xE
 
 
 
-class GNNEncoder(torch.nn.Module):
-  ''' Handles the codification of circuit slices via GNN.
+class CircuitEncoder(torch.nn.Module):
+  ''' Handles the codification of circuit slices via an Encoder-Decoder transformer.
   '''
 
+  # Recurrently used values are cached for efficiency
+  POS_EMBEDDINGS: Dict[Tuple[int, int], torch.Tensor] = {}
+  TRANSFORMER_MASKS: Dict[int, torch.Tensor] = {}
+
   @staticmethod
-  def getPositionalEmbedding(T, d_model):
+  def comp_pos_emb(T, d_model) -> torch.Tensor:
     position = torch.arange(T).unsqueeze(1)  # [T, 1]
-    div_term = torch.exp(torch.arange(0, d_model, 2) * (-log(10000.0) / d_model))
+    div_term = torch.exp(torch.arange(0, d_model, 2) * (-torch.log(torch.tensor(10000.0)) / d_model))
     pe = torch.zeros(T, d_model)
     pe[:, 0::2] = torch.sin(position * div_term)
     pe[:, 1::2] = torch.cos(position * div_term)
-    return pe  # [T, d_model]
+    # Scale positional encoding to prevent it from overwhelming the one-hot input
+    return pe*0.5  # [T, d_model]
   
 
-  def __init__(self, hardware: Hardware, nn_dims: Tuple[int], qubit_embs: torch.Tensor):
-    assert len(nn_dims) > 2, "At least input and output dimensions must be specified"
-    assert all(d > 0 for d in nn_dims), "All nn_dims must be strictly positive"
-    assert len(qubit_embs.shape) == 2, "Qubit embeddings must be a vector of embeddings (rank 2)"
-    assert qubit_embs.shape[0] == hardware.n_physical_qubits, \
-      f"Num of embeddings ({qubit_embs.shape[0]}) does not match num of physical qubits {hardware.n_physical_qubits}"
-    assert qubit_embs.shape[1] == nn_dims[0], \
-      f"Embedding size ({qubit_embs.shape[1]}) does not match nn_dims.shape[0] ({nn_dims.shape[0]})"
+  @staticmethod
+  def get_pos_emb(T, d_model) -> torch.Tensor:
+    request = (T, d_model)
+    if request not in CircuitEncoder.POS_EMBEDDINGS.keys():
+      CircuitEncoder.POS_EMBEDDINGS[request] = CircuitEncoder.comp_pos_emb(*request)
+    return CircuitEncoder.POS_EMBEDDINGS[request]
+  
+
+  @staticmethod
+  def get_transformer_mask(size: int) -> torch.Tensor:
+    if size not in CircuitEncoder.TRANSFORMER_MASKS.keys():
+      mask = torch.nn.Transformer.generate_square_subsequent_mask(size)
+      CircuitEncoder.TRANSFORMER_MASKS[size] = mask
+    return CircuitEncoder.TRANSFORMER_MASKS[size]
+  
+
+  def __init__(self, n_qubits: int, n_heads: int, n_layers: int):
     super().__init__()
-    self.hw = hardware
-    self.nn_dims = nn_dims
-    self.qubit_embeddings = qubit_embs
-    self.convs = torch.nn.ModuleList()
-    for in_dim, out_dim in zip(nn_dims[:-1], nn_dims[1:]):
-      self.convs.append(GCNConv(in_dim, out_dim))
+    self.n_qubits = n_qubits
+    self.transformer = torch.nn.Transformer(
+      d_model=n_qubits**2,
+      nhead=n_heads,
+      num_encoder_layers=n_layers,
+      num_decoder_layers=n_layers,
+      batch_first=True
+    )
 
 
-  def gnn(self, slice_matrices: List[torch.Tensor]) -> torch.Tensor:
-    # TODO: check zeros
-    batch = Batch.from_data_list(
-      [Data(x=self.qubit_embeddings, edge_index=mat) for mat in slice_matrices])
-    x = batch.x
-    for conv in self.convs:
-      x = conv(x, batch.edge_index)
-      x = torch.relu(x)
-    return x
+  def encode_slice(self, adjacency_matrices: torch.Tensor, later_embeddings: torch.Tensor) -> torch.Tensor:
+    ''' Get the circuit embedding for slice s_i.
 
+    Arguments:
+      - adjacency_matrices [B, S, Q*Q]: for a batch of size B, S flattened adjacency matrices of
+        size [Q*Q] from s_i until the end of the circuit [s_i, s_{i+1}, s_{i+2}, ..., s_{n-1}].
+      - later_embeddings [B, S, Q*Q]: embeddings produced in the S-1 previous encoding steps,
+        followed by the identity matrix (as the "bootstrap embedding" for the sequence).
+    Returns:
+      - [B,Q*Q]: flattened circuit embedding of size [Q*Q] for the B elements in the batch.
+    '''
+    device = adjacency_matrices.device
+    # We will flatten adjacency matrix into a vector to make it easier to handle in the code
+    (B, S, Q2) = adjacency_matrices.shape
+    pos_emb = CircuitEncoder.get_pos_emb(S, Q2).expand(B,S,Q2)
+    in_seq = pos_emb + adjacency_matrices
+    out_seq = pos_emb + later_embeddings
+    mask = CircuitEncoder.get_transformer_mask(S).to(device)
+    # if S == 1 and B != 1:
+    #   print(f" ---- {adjacency_matrices} ->\n{in_seq}\n{out_seq}\n{self.transformer(in_seq, out_seq, tgt_mask=mask)[:,-1,:]}\n")
+    return self.transformer(in_seq, out_seq, tgt_mask=mask)[:,-1,:]
+  
 
-  def forward(self, circuits: List[Circuit]) -> Tuple[torch.Tensor, torch.Tensor]:
-    slices_per_circuit = [c.n_slices for c in circuits]
-    indices = [sum(slices_per_circuit[:i]) for i in range(len(circuits)+1)]
-    # Each circuit is composed as a list of matrices, join all lists into a single mega-list
-    matrices = [m for c in circuits for m in getCircuitMatrices2xE(c)]
-    result = self.gnn(matrices)
-    # Result has shape=(n_qubits*sum(c.n_slices for c in circuits), circuit_emb_size), we need to
-    # first split the slices of all circuits, then apply qubitwise maxpool to get slice embeddings
-    # for each time slice. Then apply positional encoding and do slicewise maxpool to get a circuit
-    # embedding for each time slice. Sigh.
-    total_n_slices = sum(c.n_slices for c in circuits)
-    result = result.reshape(total_n_slices, self.hw.n_physical_qubits, self.nn_dims[-1])
-    slice_embs = torch.max(result, dim=1).values
-    # Split the resulting tensor into a list with one tensor per circuit
-    slice_embs = [slice_embs[i_ini:i_fi,:] for i_ini, i_fi in zip(indices[:-1], indices[1:])]
-    # Add positional embeddings to slices of each circuit
-    for n_slices, circuit_slice_embs in zip(slices_per_circuit, slice_embs):
-      circuit_slice_embs += GNNEncoder.getPositionalEmbedding(n_slices, self.nn_dims[-1])
-    circuit_embs = []
-    # Each item in slice embs is a tensor. The ith row of this tensor corresponds to the embedding
-    # of the ith time slice. We want a tensor in which the ith row contains a circuit embedding from
-    # the ith time slice until the end (through pooling)
-    for circuit in slice_embs:
-      circuit_emb = torch.empty_like(circuit)
-      for i in range(circuit.shape[0]):
-        circuit_emb[i,:] = torch.max(circuit[i:,:], dim=0).values
-      circuit_embs.append(circuit_emb)
-    return list(zip(circuit_embs, slice_embs))
+  def forward(self, adjacency_matrices: torch.Tensor) -> torch.Tensor:
+    ''' Get circuit embedding for each slice.
+
+    Arguments:
+      - adjacency_matrices [B, N, Q, Q]: for a batch of size B, N adjacency matrices of size [Q,Q]
+        corresponding to the N time slices in each circuit [s_0, s_1, ..., s_{n-1}].
+    
+    Returns:
+      - [B, N, Q, Q]: a circuit embedding of size [Q, Q] for each of the N times slices per circuit
+        for all circuits in the batch of size B.
+    '''
+    device = adjacency_matrices.device
+    (B, N, Q, Q) = adjacency_matrices.shape
+    adjacency_matrices = adjacency_matrices.reshape(B,N,Q*Q)
+    # Add initial decoded slice to be identity (all gates only interact with themselves)
+    last_slice = torch.eye(Q, device=device).expand(B,1,-1,-1).reshape(B,1,-1)
+    circuit_embs = torch.concat([torch.empty_like(adjacency_matrices), last_slice], dim=1)
+    # Iterate slices backwards (from the end of the circuit towards the beginning)
+    for s_i in range(N-1,-1,-1):
+      circuit_embs[:,s_i,:] = self.encode_slice(
+        adjacency_matrices=adjacency_matrices[:,s_i:,:],
+        later_embeddings=circuit_embs[:,(s_i+1):,:],
+      )
+    # Ignore last embedding, as it was only using for bootstrapping regression
+    return circuit_embs[:,:-1,:].reshape(B,N,Q,Q)

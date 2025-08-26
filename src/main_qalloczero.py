@@ -4,7 +4,7 @@ from utils.allocutils import solutionCost
 from sampler.randomcircuit import RandomCircuit
 from qalloczero.alg.mcts import MCTS
 from qalloczero.alg.alphazero import AlphaZero
-from qalloczero.models.enccircuit import GNNEncoder
+from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.snapshotenc import SnapEncModel
 from qalloczero.models.predmodel import PredictionModel
 from qalloczero.models.inferenceserver import InferenceServer
@@ -22,11 +22,12 @@ def main():
   q_embs = torch.nn.Parameter(torch.randn(hardware.n_physical_qubits, q_emb_size), requires_grad=True)
   dummy_q_emb = torch.nn.Parameter(torch.randn(q_emb_size), requires_grad=True)
 
-  circuit_encoder = GNNEncoder(
-    hardware=hardware,
-    nn_dims=encoder_shape,
-    qubit_embs=q_embs
-  )
+  # circuit_encoder = GNNEncoder(
+  #   hardware=hardware,
+  #   nn_dims=encoder_shape,
+  #   qubit_embs=q_embs
+  # )
+  circuit_encoder = None
   snap_enc = SnapEncModel(
     nn_dims=(16,8),
     hardware=hardware,
@@ -67,5 +68,17 @@ def main():
   # drawQubitAllocation(allocations, core_caps, circuit.slice_gates)
 
 
+
+def testing():
+  sampler = RandomCircuit(num_lq=4, num_slices=3)
+  cs = [sampler.sample().adj_matrices.unsqueeze(0) for _ in range(2)]
+  encoder = CircuitEncoder(n_qubits=4, n_heads=4, n_layers=4)
+  encoder.eval()
+  embs = [encoder(m) for m in cs]
+  embs_b = encoder(torch.vstack(cs))
+  print(torch.equal(torch.vstack(embs), embs_b))
+
+
 if __name__ == "__main__":
-    main()
+  # main()
+  testing()

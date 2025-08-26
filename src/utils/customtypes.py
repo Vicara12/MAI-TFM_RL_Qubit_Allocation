@@ -16,19 +16,30 @@ class Circuit:
   # n_gates: total number of gates in the circuit
   # alloc_steps: refer to the function __getAllocOrder for info on this attribute
   # n_steps: len(alloc_steps)
+  # adj_matrices: per-slice adjacency matrices of qubit interactions
 
 
   def __post_init__(self):
-    self.n_gates = self.__getNGates()
-    self.alloc_steps = self.__getAllocOrder()
+    self.n_gates = self.__get_N_gates()
+    self.alloc_steps = self.__get_alloc_order()
     self.n_steps = len(self.alloc_steps)
+    self.adj_matrices = self.__get_adj_matrices()
 
 
-  def __getNGates(self) -> int:
+  def __get_N_gates(self) -> int:
     return sum(len(slice_i) for slice_i in self.slice_gates)
+  
+
+  def __get_adj_matrices(self) -> torch.Tensor:
+    matrices = torch.eye(self.n_qubits).repeat(self.n_slices,1,1)
+    for s_i, slice in enumerate(self.slice_gates):
+      for (a,b) in slice:
+        matrices[s_i,a,b] = matrices[s_i,b,a] = 1
+        matrices[s_i,a,a] = matrices[s_i,b,b] = 0
+    return matrices
 
 
-  def __getAllocOrder(self) -> Tuple[Tuple[int, Union[GateType, Tuple[int]]], ...]:
+  def __get_alloc_order(self) -> Tuple[Tuple[int, Union[GateType, Tuple[int]]], ...]:
     ''' Get the allocation order of te qubits for a given circuit.
 
     Returns a tuple with the allocations to be performed. Each tuple element is another tuple that
@@ -48,6 +59,7 @@ class Circuit:
         allocations.append((slice_i, (q,), self.n_gates - gate_counter))
     return tuple(allocations)
   
+
   @property
   def n_slices(self) -> int:
     return len(self.slice_gates)
@@ -80,6 +92,7 @@ class Hardware:
   def n_cores(self):
     return len(self.core_capacities)
   
+
   @property
   def n_physical_qubits(self):
     return sum(self.core_capacities).item()
