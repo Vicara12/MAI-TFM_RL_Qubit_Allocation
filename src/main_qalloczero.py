@@ -69,7 +69,7 @@ def main():
 
 
 
-def testing():
+def testing_circuit_enc():
   sampler = RandomCircuit(num_lq=4, num_slices=3)
   cs = [sampler.sample().adj_matrices.unsqueeze(0) for _ in range(2)]
   encoder = CircuitEncoder(n_qubits=4, n_heads=4, n_layers=4)
@@ -79,6 +79,82 @@ def testing():
   print(torch.equal(torch.vstack(embs), embs_b))
 
 
+def testing_pred_model():
+  core_connectivity = torch.tensor([
+    [0,1],
+    [1,0],
+  ], dtype=torch.float)
+  pred_model = PredictionModel(
+    n_qubits=4,
+    n_cores=2,
+    core_connectivity=core_connectivity,
+    number_emb_size=4,
+    glimpse_size=8,
+    n_heads=4,
+  )
+  pred_model.eval()
+  qubits = torch.tensor([
+    [1, 0],
+    [2,-1],
+    [2, 1],
+  ])
+  prev_core_allocs = torch.tensor([
+    [ 0, 1, 1, 1],
+    [ 1, 0, 1, 0],
+    [-1,-1,-1,-1],
+  ])
+  current_core_allocs = torch.tensor([
+    [ 0,-1, 1,-1],
+    [ 0,-1, 0,-1],
+    [-1,-1,-1,-1],
+  ])
+  core_capacities = torch.tensor([
+    [ 1, 1],
+    [ 0, 2],
+    [ 2, 2],
+  ], dtype=torch.float)
+  circuit_emb = torch.randn(3,4,4)
+  slice_adj_mat = torch.tensor([
+    [[0,1,0,0],
+     [1,0,0,0],
+     [0,0,1,0],
+     [0,0,0,1]],
+    [[0,0,0,1],
+     [0,1,0,0],
+     [0,0,1,0],
+     [1,0,0,0]],
+    [[0,1,0,0],
+     [1,0,0,0],
+     [0,0,0,1],
+     [0,0,1,0]],
+  ])
+  probs_b, vals_b = pred_model(
+    qubits=qubits,
+    prev_core_allocs=prev_core_allocs,
+    current_core_allocs=current_core_allocs,
+    core_capacities=core_capacities,
+    circuit_emb=circuit_emb,
+    slice_adj_mat=slice_adj_mat,
+  )
+  probs = []
+  vals = []
+  for i in range(3):
+    p, v = pred_model(
+      qubits=qubits[i].unsqueeze(0),
+      prev_core_allocs=prev_core_allocs[i].unsqueeze(0),
+      current_core_allocs=current_core_allocs[i].unsqueeze(0),
+      core_capacities=core_capacities[i].unsqueeze(0),
+      circuit_emb=circuit_emb[i].unsqueeze(0),
+      slice_adj_mat=slice_adj_mat[i].unsqueeze(0),
+    )
+    probs.append(p)
+    vals.append(v)
+  print(torch.equal(torch.vstack(probs), probs_b))
+  print(torch.equal(torch.vstack(vals), vals_b))
+
+
+
 if __name__ == "__main__":
   # main()
-  testing()
+  # testing_circuit_enc()
+  testing_pred_model()

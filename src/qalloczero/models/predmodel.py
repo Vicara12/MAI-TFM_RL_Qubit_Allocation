@@ -113,16 +113,19 @@ class PredictionModel(torch.nn.Module):
       - [B,C,glimpse_size]: For each element in the batch of size B, a core embedding for each of
         the C cores of length [glimpse_size].
     '''
+    # We will write to these two, so we make a copy to not modify the originals
+    prev_core_allocs = prev_core_allocs.clone()
+    current_core_allocs = current_core_allocs.clone()
     device = qubits.device
     (B,C) = core_capacities.shape
     (_,Q) = prev_core_allocs.shape
-    double_qubits = (qubits[:,1] != -1)
     # Compute the cost of allocating the first qubit of the pair to each core
-    has_prev_core = (qubits[:,0] != -1)
-    swap_cost = torch.zeros_like(core_capacities) # [B,C]
-    prev_cores = prev_core_allocs[has_prev_core,qubits[:,0].T] # [B]
-    swap_cost[has_prev_core] = self.core_connectivity[prev_cores,:] # [B,C]
+    has_prev_core = (prev_core_allocs != -1).any(dim=-1) # Check rows that only contain -1
+    swap_cost = torch.zeros_like(core_capacities, dtype=torch.float) # [B,C]
+    prev_cores = prev_core_allocs[has_prev_core,qubits[has_prev_core,0]] # [B]
+    swap_cost[has_prev_core] = self.core_connectivity[prev_cores] # [B,C]
     # For double qubit allocs, compute the cost of allocation of the second
+    double_qubits = (qubits[:,1] != -1) & has_prev_core
     prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].T] # [b]
     swap_cost[double_qubits] += self.core_connectivity[prev_cores,:] # [b,C]
 
@@ -134,19 +137,19 @@ class PredictionModel(torch.nn.Module):
     number_embeddings = self.number_encoder(numerical_info_row).reshape(B,C,2*self.n_emb_size)
     # Transform prev_core_allocs of size [B,Q] with items in the range 0:C-1 to a one hot version of
     # size [B,C,Q] with a 1 in position (b,c,q) if in prev_core_allocs[b,q] == c, 0 otherwise
+    prev_core_allocs[prev_core_allocs == -1] = C
     prev_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C]
       prev_core_allocs,
-      num_classes=C,
-      device=device,
-      dtype=torch.float32
+      num_classes=C+1,
     ).permute(0,2,1) # [B,C,Q]
+    # Discard core C (-1) and fill cores without previous assignment with 1
+    prev_c_allocs_sparse = prev_c_allocs_sparse[:,:-1,:]
+    prev_c_allocs_sparse[~has_prev_core,:,:] = 1
     # Set qubit not allocated (-1) to a new core which we will remove later
     current_core_allocs[current_core_allocs == -1] = C
     curr_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
-      prev_core_allocs,
+      current_core_allocs,
       num_classes=C+1,
-      device=device,
-      dtype=torch.float32
     ).permute(0,2,1) # [B,C+1,Q]
     curr_c_allocs_sparse = curr_c_allocs_sparse[:,:-1,:] # [B,C,Q]
 
@@ -183,12 +186,11 @@ class PredictionModel(torch.nn.Module):
     qubit_matrix[double_qubits, qubits[double_qubits,0], qubits[double_qubits,1]] = 1
     qubit_matrix[double_qubits, qubits[double_qubits,1], qubits[double_qubits,0]] = 1
     # Write 1 to (i,i) position for allocations of a single qubit
-    qubit_matrix[not double_qubits, qubits[not double_qubits,0], qubits[not double_qubits,0]] = 1
+    qubit_matrix[~double_qubits, qubits[~double_qubits,0], qubits[~double_qubits,0]] = 1
 
     input_data = torch.cat( #[B,3,Q*Q]
       [circuit_emb.reshape(B,1,Q*Q), slice_adj_mat.reshape(B,1,Q*Q), qubit_matrix.reshape(B,1,Q*Q)],
       dim=1,
-      device=device
     )
     alloc_ctx_emb = self.circuit_context_encoder(input_data) # [B,alloc_ctx_emb_size]
     return alloc_ctx_emb
@@ -241,7 +243,7 @@ class PredictionModel(torch.nn.Module):
       qubits=qubits,
     )
     glimpses, attn_weights = self.mha(
-      querry=alloc_ctx_embs,
+      query=alloc_ctx_embs,
       key=core_embs,
       value=core_embs,
     )
