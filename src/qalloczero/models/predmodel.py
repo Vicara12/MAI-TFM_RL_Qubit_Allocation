@@ -1,85 +1,249 @@
 from typing import Tuple, Optional, Union
-from dataclasses import dataclass
 import torch
-from math import sqrt
-from utils.customtypes import Hardware, GateType
+
 
 
 class PredictionModel(torch.nn.Module):
-  
-  @dataclass
-  class Config:
-    hw: Hardware
-    circuit_emb_shape: int
-    mha_num_heads: int = 4
+  ''' For each qubit and time slice, output core allocation probability density and value of state.
 
+  This model is used to determine the probabilities of allocating a qubit to each core in an
+  specific time slice of the circuit and predicting the normalized value function of the current
+  (input) state.
 
-  def __init__(self,
-               config: Config,
-               qubit_embs: torch.Tensor):
+  The normalization of the value function is given by $V_norm = C/N_g$, where C is the cost of
+  allocating what remains of the circuit (including the current allocation) and N_g is the number of
+  two qubit gates in the remaining part of the circuit.
+
+  Args:
+    - n_qubits: Number of physical qubits among all cores.
+    - n_cores: Number of cores.
+    - core_connectivity [C,C]: A symmetric matrix where item (i,j) indicates the cost of swapping
+      a qubit from core i to core j or vice versa. Assumed to be the same for all elements in the
+      batch.
+    - number_emb_size: size of the embedding used to encode numbers (core capacity and swap cost).
+    - glimpse_size: size of the glimpse (core embedding and output of the MHA).
+    - alloc_ctx_emb_size: size of the allocation context embedding (which will be fed into MHA).
+    - n_heads: number of heads used in the MHA mixing of core embeddings and allocation context.
+  '''
+
+  def __init__(
+      self,
+      n_qubits: int,
+      n_cores: int,
+      core_connectivity: torch.Tensor,
+      number_emb_size: int,
+      glimpse_size: int,
+      n_heads: int,
+  ):
     super().__init__()
-    self.cfg = config
-    self.qemb_len = qubit_embs.shape[1]
-    self.qubit_embs = qubit_embs
-    ce_len = self.cfg.circuit_emb_shape
-    self.cap_emb_nn = self.__getEmbNN(ce_len)
-    self.dist_emb_nn = self.__getEmbNN(ce_len)
-    self.context_nn = torch.nn.Linear(2*ce_len + self.qemb_len, ce_len)
-    self.mha = torch.nn.MultiheadAttention(embed_dim=ce_len,
-                                           num_heads=self.cfg.mha_num_heads,
-                                           batch_first=True)
-    self.softmax = torch.nn.Softmax(dim=-1)
-    self.glimpse_proj_nn = torch.nn.Sequential(
-      torch.nn.Linear(ce_len,   ce_len//2),
+    self.n_qubits = n_qubits
+    self.n_cores = n_cores
+    self.n_emb_size = number_emb_size
+    self.glimpse_size = glimpse_size
+    self.core_connectivity = core_connectivity
+
+    # Used to convert numbers to vector embeddings. We use this instead of proper embeddings in
+    # order to make it more flexible (no fixed number of bins)
+    self.number_encoder = torch.nn.Sequential(
+      torch.nn.Linear(1,number_emb_size//2),
       torch.nn.ReLU(),
-      torch.nn.Linear(ce_len//2, ce_len//4),
-      torch.nn.ReLU(),
-      torch.nn.Linear(ce_len//4, 1)
+      torch.nn.Linear(number_emb_size//2, number_emb_size),
+      torch.nn.ReLU()
     )
 
-
-  def __getEmbNN(self, emb_len) -> torch.nn.Module:
-    return torch.nn.Sequential(
-      torch.nn.Linear(1, emb_len//2),
+    # The information of a core includes a one hot vector of the qubits it stored in the previous
+    # time slice, as well as those stored in the current time slice, and two number embeddings, one
+    # for the allocation cost and another for the core capacity
+    core_inp_size = 2*n_qubits + 2*number_emb_size
+    per_layer_inc = (core_inp_size - glimpse_size)//3
+    self.core_encoder = torch.nn.Sequential(
+      torch.nn.Linear(core_inp_size, core_inp_size-per_layer_inc),
       torch.nn.ReLU(),
-      torch.nn.Linear(emb_len//2, emb_len)
+      torch.nn.Linear(core_inp_size-per_layer_inc, core_inp_size-2*per_layer_inc),
+      torch.nn.ReLU(),
+      torch.nn.Linear(core_inp_size-2*per_layer_inc, glimpse_size),
+      torch.nn.ReLU()
     )
+
+    # Encode circuit context into an embedding vector
+    per_layer_inc = (n_qubits**2 - glimpse_size)//2
+    self.circuit_context_encoder = torch.nn.Sequential(
+      torch.nn.Conv1d(in_channels=3, out_channels=3, kernel_size=1), # [B,3,Q**2]
+      torch.nn.ReLU(),
+      torch.nn.Conv1d(in_channels=3, out_channels=1, kernel_size=1), # [B,1,Q**2]
+      torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits**2, n_qubits**2 - per_layer_inc),
+      torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits**2 - per_layer_inc, glimpse_size),
+      torch.nn.ReLU()
+    )
+
+    # We use MHA to mix core information and allocation context information into a glimpse, which is
+    # then projected back into the core embeddings to get the logits of allocation to each core
+    self.mha = torch.nn.MultiheadAttention(
+      embed_dim=glimpse_size,
+      num_heads=n_heads,
+      batch_first=True,
+    )
+
+    self.value_network = torch.nn.Sequential(
+      torch.nn.Linear(2*glimpse_size, glimpse_size//2 + glimpse_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(glimpse_size//2 + glimpse_size, glimpse_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(glimpse_size, glimpse_size//2),
+      torch.nn.ReLU(),
+      torch.nn.Linear(glimpse_size//2, 1)
+    )
+
   
+  def _encode_cores(
+      self,
+      qubits: torch.Tensor,
+      prev_core_allocs: torch.Tensor,
+      current_core_allocs: torch.Tensor,
+      core_capacities: torch.Tensor,
+  ) -> torch.Tensor:
+    ''' Computes the core embeddings (G) from a batch of cores.
 
-  def __recomputeK(self, x: torch.Tensor) -> torch.Tensor:
-    E = self.mha.embed_dim
-    w_k = self.mha.in_proj_weight[E:2*E, :]
-    b_k = self.mha.in_proj_bias[E:2*E]
-    return torch.nn.functional.linear(x, w_k, b_k)
+    Arguments:
+      Refer to the forward method.
+    
+    Returns:
+      - [B,C,glimpse_size]: For each element in the batch of size B, a core embedding for each of
+        the C cores of length [glimpse_size].
+    '''
+    device = qubits.device
+    (B,C) = core_capacities.shape
+    (_,Q) = prev_core_allocs.shape
+    double_qubits = (qubits[:,1] != -1)
+    # Compute the cost of allocating the first qubit of the pair to each core
+    has_prev_core = (qubits[:,0] != -1)
+    swap_cost = torch.zeros_like(core_capacities) # [B,C]
+    prev_cores = prev_core_allocs[has_prev_core,qubits[:,0].T] # [B]
+    swap_cost[has_prev_core] = self.core_connectivity[prev_cores,:] # [B,C]
+    # For double qubit allocs, compute the cost of allocation of the second
+    prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].T] # [b]
+    swap_cost[double_qubits] += self.core_connectivity[prev_cores,:] # [b,C]
+
+    # Encode scalars (allocation cost and core capacities) into embedding vectors
+    # We will organize core info as [prev_core_allocs, current_core_allocs, swap_cost_emb, core_caps_emb],
+    # so we put the two numerical values side to side so that we can then flatten the number vector
+    # and compute it in batch, then we reshape it back into [swap_cost_emb, core_caps_emb]
+    numerical_info_row = torch.cat([swap_cost, core_capacities], dim=-1).reshape(2*B*C,1)
+    number_embeddings = self.number_encoder(numerical_info_row).reshape(B,C,2*self.n_emb_size)
+    # Transform prev_core_allocs of size [B,Q] with items in the range 0:C-1 to a one hot version of
+    # size [B,C,Q] with a 1 in position (b,c,q) if in prev_core_allocs[b,q] == c, 0 otherwise
+    prev_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C]
+      prev_core_allocs,
+      num_classes=C,
+      device=device,
+      dtype=torch.float32
+    ).permute(0,2,1) # [B,C,Q]
+    # Set qubit not allocated (-1) to a new core which we will remove later
+    current_core_allocs[current_core_allocs == -1] = C
+    curr_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
+      prev_core_allocs,
+      num_classes=C+1,
+      device=device,
+      dtype=torch.float32
+    ).permute(0,2,1) # [B,C+1,Q]
+    curr_c_allocs_sparse = curr_c_allocs_sparse[:,:-1,:] # [B,C,Q]
+
+    core_info = torch.cat( # [B,C,2*Q + 2*self.n_emb_size]
+      [prev_c_allocs_sparse, curr_c_allocs_sparse, number_embeddings],
+      axis=-1
+    ).reshape(B*C, 2*Q + 2*self.n_emb_size) # Flatten into matrix to compute all in batch
+    core_embs = self.core_encoder(core_info).reshape(B,C,self.glimpse_size) # [B,C,self.glimpse_size]
+    return core_embs
+    
+
+  def _encode_circuit_context(
+      self,
+      circuit_emb: torch.Tensor,
+      slice_adj_mat: torch.Tensor,
+      qubits: torch.Tensor
+  ) -> torch.Tensor:
+    ''' Get an embedding that contains the information about the allocation context.
+
+    Args:
+      Refer to the forward method.
+    
+    Returns:
+      - [B,alloc_ctx_emb_size]: For each item in the batch of size B, an embedding of length
+        [alloc_ctx_emb_size] with the information of the rest of the circuit, the current slice
+        and qubits to be allocated.
+    '''
+    device = circuit_emb.device
+    (B,Q,_) = circuit_emb.shape
+    double_qubits = (qubits[:,1] != -1)
+
+    qubit_matrix = torch.zeros_like(slice_adj_mat)
+    # Write 1 to (i,j) and (j,i) positions for allocations of two qubits
+    qubit_matrix[double_qubits, qubits[double_qubits,0], qubits[double_qubits,1]] = 1
+    qubit_matrix[double_qubits, qubits[double_qubits,1], qubits[double_qubits,0]] = 1
+    # Write 1 to (i,i) position for allocations of a single qubit
+    qubit_matrix[not double_qubits, qubits[not double_qubits,0], qubits[not double_qubits,0]] = 1
+
+    input_data = torch.cat( #[B,3,Q*Q]
+      [circuit_emb.reshape(B,1,Q*Q), slice_adj_mat.reshape(B,1,Q*Q), qubit_matrix.reshape(B,1,Q*Q)],
+      dim=1,
+      device=device
+    )
+    alloc_ctx_emb = self.circuit_context_encoder(input_data) # [B,alloc_ctx_emb_size]
+    return alloc_ctx_emb
 
 
-  def forward(self,
-              qubits: Union[GateType, Tuple[int]],
-              core_embs: torch.Tensor,
-              prev_core_allocs: Optional[torch.Tensor],
-              current_core_capacities: torch.Tensor,
-              circuit_emb: torch.Tensor,
-              slice_emb: torch.Tensor
-              ) -> Tuple[torch.Tensor, float]:
-    qubit_emb = torch.mean(self.qubit_embs[qubits,:], dim=0)
-    context = self.context_nn(torch.concat([circuit_emb, slice_emb, qubit_emb], dim=-1)).unsqueeze(0)
-    if prev_core_allocs is not None:
-      prev_cores = prev_core_allocs[qubits,]
-      distances = torch.sum(self.cfg.hw.core_connectivity[prev_cores,:], dim=0)
-    else:
-      distances = torch.zeros_like(self.cfg.hw.core_capacities)
-    g_tq = core_embs + \
-          self.cap_emb_nn(current_core_capacities.float().unsqueeze(1)) + \
-          self.dist_emb_nn(distances.float().unsqueeze(1))
-    glimpse, _ = self.mha(context, g_tq, g_tq)
+  def forward(
+      self,
+      qubits: torch.Tensor,
+      prev_core_allocs: torch.Tensor,
+      current_core_allocs: torch.Tensor,
+      core_capacities: torch.Tensor,
+      circuit_emb: torch.Tensor,
+      slice_adj_mat: torch.Tensor,
+  ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ''' Get the per-core allocation probability and normalized value function for the current state.
 
-    # Get probabilities
-    K = self.__recomputeK(g_tq)
-    sqrt_dk = sqrt(self.qemb_len)
-    logits = torch.mm(glimpse/sqrt_dk, K.T)
-    # Illegal actions are not taken into account here as this is suppressed in the MCTS call
-    probs = self.softmax(logits)
+    Args:
+      - qubits [B,2]: For a batch of size B, tensor with the qubit(s) to allocate. If the allocation
+        corresponds to a gate, then the two positions should be filled with the qubits of the gate.
+        For a single qubit allocation the second position should contain a -1.
+      - prev_core_allocs [B,Q]: For a batch of size B, contains a vector of
+        size Q where the position i contains the core that the ith logical qubit was allocated to it
+        in the previous time slice. If there is no previous core allocation (first slice) then the
+        corresponding qubit should have core value -1.
+      - current_core_allocs [B,Q]: Equivalent to prev_core_allocs, but contains the allocations
+        performed in the current time slice. Positions with -1 indicate the given qubit has not been
+        allocated yet.
+      - core_capacities [B,C]: For a batch of size B, contains a vector of size C with the number of
+        qubits that can still be allocated in each core.
+      - circuit_emb [B,Q,Q]: For a batch of size B, contains a QxQ matrix which corresponds to the
+        circuit embedding from the current slice until the end of the circuit.
+      - slice_adj_mat [B,Q,Q]: For a batch of size B, contains a QxQ matrix with the one hot encoded
+        adjacency matrix of the current slice being allocated.
 
-    # Get values
-    v = self.glimpse_proj_nn(glimpse.squeeze())
-    return probs.squeeze(), v, logits.squeeze()
+    Returns:
+      - [B,C]: For a batch of size B, a vector where each element corresponds to the probability of
+        allocating the given qubit(s) to that core.
+      - [B]: For a batch of size B, a scalar that corresponds to the expected normalized value cost
+        of the allocating the input state.
+    '''
+    core_embs = self._encode_cores(
+      qubits=qubits,
+      prev_core_allocs=prev_core_allocs,
+      current_core_allocs=current_core_allocs,
+      core_capacities=core_capacities,
+    )
+    alloc_ctx_embs = self._encode_circuit_context(
+      circuit_emb=circuit_emb,
+      slice_adj_mat=slice_adj_mat,
+      qubits=qubits,
+    )
+    glimpses, attn_weights = self.mha(
+      querry=alloc_ctx_embs,
+      key=core_embs,
+      value=core_embs,
+    )
+    value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1))
+    return attn_weights, value
