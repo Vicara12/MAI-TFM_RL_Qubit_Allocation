@@ -10,6 +10,7 @@ from qalloczero.models.predmodel import PredictionModel
 from qalloczero.models.inferenceserver import InferenceServer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
+from qalloczero.alg.ts_cpp import TSCppEngine
 
 
 
@@ -128,7 +129,18 @@ def testing_pred_model():
      [0,0,0,1],
      [0,0,1,0]],
   ])
-  probs_b, vals_b = pred_model(
+  ts_engine = TSCppEngine()
+  ts_engine.load_model(pred_model)
+  probs_cpp, vals_cpp = ts_engine.test_forward(
+    qubits,
+    prev_core_allocs,
+    current_core_allocs,
+    core_capacities,
+    circuit_emb,
+    slice_adj_mat,
+  )
+  
+  probs_py, vals_py = pred_model(
     qubits=qubits,
     prev_core_allocs=prev_core_allocs,
     current_core_allocs=current_core_allocs,
@@ -136,22 +148,9 @@ def testing_pred_model():
     circuit_emb=circuit_emb,
     slice_adj_mat=slice_adj_mat,
   )
-  probs = []
-  vals = []
-  for i in range(3):
-    p, v = pred_model(
-      qubits=qubits[i].unsqueeze(0),
-      prev_core_allocs=prev_core_allocs[i].unsqueeze(0),
-      current_core_allocs=current_core_allocs[i].unsqueeze(0),
-      core_capacities=core_capacities[i].unsqueeze(0),
-      circuit_emb=circuit_emb[i].unsqueeze(0),
-      slice_adj_mat=slice_adj_mat[i].unsqueeze(0),
-    )
-    probs.append(p)
-    vals.append(v)
-  print(torch.equal(torch.vstack(probs), probs_b))
-  print(torch.equal(torch.vstack(vals), vals_b))
-
+  
+  print(torch.equal(probs_py, probs_cpp))
+  print(torch.equal(vals_py, vals_cpp))
 
 
 if __name__ == "__main__":

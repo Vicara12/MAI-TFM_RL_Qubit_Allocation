@@ -155,7 +155,7 @@ class PredictionModel(torch.nn.Module):
 
     core_info = torch.cat( # [B,C,2*Q + 2*self.n_emb_size]
       [prev_c_allocs_sparse, curr_c_allocs_sparse, number_embeddings],
-      axis=-1
+      dim=-1
     ).reshape(B*C, 2*Q + 2*self.n_emb_size) # Flatten into matrix to compute all in batch
     core_embs = self.core_encoder(core_info).reshape(B,C,self.glimpse_size) # [B,C,self.glimpse_size]
     return core_embs
@@ -246,6 +246,9 @@ class PredictionModel(torch.nn.Module):
       query=alloc_ctx_embs,
       key=core_embs,
       value=core_embs,
+      need_weights=True,
     )
+    # This will never be false, but is needed to tell jitter that the tensor is not optional
+    assert attn_weights is not None, "Attention weights returned None"
     value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1))
     return attn_weights, value

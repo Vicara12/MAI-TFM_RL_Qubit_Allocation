@@ -6,3 +6,4 @@ docs/qalloczero/qalloczero_notes.md
 venv
 trained/russo
 misc
+src/qalloczero/alg/ts_cpp_engine/build
