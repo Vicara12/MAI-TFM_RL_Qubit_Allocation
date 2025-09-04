@@ -76,7 +76,7 @@ class MCTS:
     self.root = self.__buildRoot()
 
 
-  def iterate(self) -> Tuple[int, int]:
+  def iterate(self) -> Tuple[int, torch.Tensor, int]:
     # Visit count is equal to the current size of the tree (excluding non-expanded nodes)
     num_sims = self.cfg.target_tree_size - self.root.visit_count
     for _ in range(num_sims):
@@ -94,7 +94,7 @@ class MCTS:
 
 
   @staticmethod
-  def __selectAction(node: Node, temp: float) -> int:
+  def __selectAction(node: Node, temp: float) -> Tuple[int, torch.Tensor]:
     visit_counts = list(
       node.children[child_i].visit_count if child_i in node.children else 0
         for child_i in range(len(node.core_caps))
