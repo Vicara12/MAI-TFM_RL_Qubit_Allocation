@@ -26,7 +26,11 @@ message(STATUS "Torch libraries: ${TORCH_LIBRARIES}")
 message(STATUS "Torch Python lib dir: ${TORCH_PY_LIBDIR}")
 
 # ---- Build the Python extension module ----
-add_library(ts_cpp_engine MODULE src/ts_engine.cpp)
+add_library(ts_cpp_engine MODULE
+  src/inference_server.cpp
+  src/tree_search.cpp
+  src/ts_engine.cpp
+)
 
 # Include headers (PyTorch includes also ship PyTorch’s pybind11)
 target_include_directories(ts_cpp_engine PRIVATE

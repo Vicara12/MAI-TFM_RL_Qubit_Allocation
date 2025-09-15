@@ -1,37 +1,12 @@
 #pragma once
 #include <torch/extension.h>
 #include <vector>
+#include <memory>
 
 
 
 class TreeSearch
 {
-  typedef struct Node;
-  int n_qubits_;
-  int n_cores_;
-  at::Tensor core_caps_;
-  at::Tensor core_conns_;
-
-  auto iterate() -> std::tuple<int, at::Tensor, int>;
-
-  auto select_action(const Node& node, float temp) -> int;
-
-  auto new_policy_and_val(const Node& node) -> std::tuple<at::Tensor, float>;
-
-  auto build_root() -> Node;
-
-  auto expand_node(Node& node) -> void;
-
-  auto action_cost(const Node& node, int action) -> float;
-
-  auto backprop(const std::vector<const Node&>& search_path) -> void;
-
-  auto ucb(const Node& node, int action) -> float;
-
-  auto select_child(const Node& current_node) -> std::tuple<int, Node&>;
-
-  auto exploration_ratio(int n_exp_nodes) -> float;
-
 public:
 
   typedef struct {
@@ -79,4 +54,41 @@ public:
   ) -> std::tuple<at::Tensor, float>;
 
   ~TreeSearch();
+
+private:
+
+  typedef struct Node;
+  int n_qubits_;
+  int n_cores_;
+  at::Tensor core_caps_;
+  at::Tensor core_conns_;
+  // These are initialized at training
+  at::Tensor slice_ajdm_;
+  at::Tensor circuit_embs_;
+  at::Tensor alloc_steps_;
+  OptConfig cfg_;
+  std::shared_ptr<Node> root_;
+
+  auto iterate() -> std::tuple<int, at::Tensor, int>;
+
+  auto select_action(
+    std::shared_ptr<const Node> node
+  ) -> std::tuple<int, at::Tensor>;
+
+  auto new_policy_and_val(std::shared_ptr<const Node> node) -> std::tuple<at::Tensor, float>;
+
+  auto build_root() -> Node;
+
+  auto expand_node(std::shared_ptr<Node> node) -> void;
+
+  auto action_cost(std::shared_ptr<const Node> node, int action) -> float;
+
+  auto backprop(std::vector<std::shared_ptr<Node>>& search_path) -> void;
+
+  auto ucb(std::shared_ptr<const Node> node, int action) -> float;
+
+  auto select_child(std::shared_ptr<const Node> current_node) -> std::shared_ptr<Node>;
+
+  auto exploration_ratio(int n_exp_nodes) -> float;
+
 };

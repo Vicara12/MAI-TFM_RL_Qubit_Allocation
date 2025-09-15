@@ -1,7 +1,9 @@
 #include <torch/extension.h>
 #include <torch/script.h>
+#include <torch/torch.h>
 #include <vector>
 #include <optional>
+#include "inference_server.hpp"
 
 namespace py = pybind11;
 
@@ -10,30 +12,9 @@ public:
     TSEngine() {}
 
     auto load_model(const std::string &path) -> void {
-        try {
-            model_ = torch::jit::optimize_for_inference(torch::jit::load(path));
-            model_->eval();
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to load model: " + std::string(e.what()));
-        }
+        InferenceServer::add_model("pred_model", path);
     }
 
-    // The forward call expects IValues, not Tensors, so we need this function to cast them
-    inline auto to_ivalue(const torch::Tensor& t) -> torch::jit::IValue {
-        return t;
-    }
-
-    // This is a variadic template function to map any number of input arguments to the forward call
-    template <typename... Args>
-    auto forward(Args&&... args) -> torch::jit::IValue {
-        torch::NoGradGuard no_grad;
-        if (model_) {
-            std::vector<torch::jit::IValue> inputs = { to_ivalue(std::forward<Args>(args))... };
-            return model_->forward(inputs);
-        } else {
-            throw std::runtime_error("Failed to call forward: no model loaded");
-        }
-    }
 
     auto test_fwd(
         at::Tensor& qubits,
@@ -45,7 +26,8 @@ public:
     ) -> pybind11::tuple {
         
 
-        auto outputs = forward(
+        auto outputs = InferenceServer::pack_and_infer(
+            "pred_model",
             qubits,
             prev_core_allocs,
             current_core_allocs,
