@@ -1,6 +1,7 @@
 #pragma once
 #include <torch/torch.h>
 #include <string>
+#include <vector>
 #include <map>
 
 
@@ -18,11 +19,13 @@ public:
 
   static auto has_model(const std::string& name) -> bool;
 
+  static auto rm_model(const std::string& name) -> void;
+
   // Variadic template function to map any number of input arguments to the forward call
   template <typename... Args>
-  static auto infer(const std::string& name, Args&&... args) -> torch::jit::IValue;
+  static auto infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor>;
 
   // Infer method to call models that support batch with a single instance (unsqueeze all params)
   template <typename... Args>
-  static auto pack_and_infer(const std::string& name, Args&&... args) -> torch::jit::IValue;
+  static auto pack_and_infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor>;
 };

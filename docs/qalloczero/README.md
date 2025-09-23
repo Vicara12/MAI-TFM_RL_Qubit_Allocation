@@ -15,7 +15,7 @@ to generate the python bind.
 
 The `cmake` command should have produced a `compile_commands.json`.
 In order to make VSCode use it, use this template of `.vscode/c_cpp_properties.json` and adapt it to
-your OS and needs
+your OS and needs (remember to also install the C/C++ VSCode extension)
 ```json
 {
     "configurations": [
@@ -28,4 +28,14 @@ your OS and needs
     ],
     "version": 4
 }
+```
+
+NOTE: If your system does not have cuda installed (this might be the case if you
+have an integrated graphics card), uninstall cuda
+```bash
+pip uninstall cuda
+```
+and install a wheel that does not contain cuda via
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```

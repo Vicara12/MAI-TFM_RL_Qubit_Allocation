@@ -38,8 +38,8 @@ class AlphaZero:
     prev_alloc: torch.Tensor
     core_caps: torch.Tensor
     curr_slice: int
-    final_logits: torch.Tensor
-    final_value: float
+    logits: torch.Tensor
+    value: float
 
 
 
@@ -79,8 +79,9 @@ class AlphaZero:
              f"slc={alloc_step[0]} {alloc_step[1]} -> {alloc_to_core}] "
              f"sims={n_sims} cost={total_cost}"))
     
+    n_cores = self.cfg.hardware.n_cores
     theoretical_n_expanded_nodes = circuit.n_steps * \
-      self.cfg.mcts_config.target_tree_size/self.cfg.hardware.n_cores
+      self.cfg.mcts_config.target_tree_size * (n_cores - 1)/n_cores
 
     return env.qubit_allocations, n_expanded_nodes/theoretical_n_expanded_nodes
   

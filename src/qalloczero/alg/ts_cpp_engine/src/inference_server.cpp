@@ -6,43 +6,51 @@
 
 auto InferenceServer::add_model(std::string name, const std::string& path_to_pth) -> void {
   try {
-    auto model = torch::jit::optimize_for_inference(torch::jit::load(path_to_pth));
+    auto model_unopt = torch::jit::load(path_to_pth);
+    auto model = torch::jit::optimize_for_inference(model_unopt);
     model.eval();
-    InferenceServer::models[name] = std::move(model);
+    InferenceServer::models[std::move(name)] = std::move(model);
   } catch (const std::exception& e) {
     throw std::runtime_error("Failed to load model: " + std::string(e.what()));
   }
 }
 
+auto InferenceServer::rm_model(const std::string& name) -> void {
+  auto elm = InferenceServer::models.find(name);
+  if (elm != InferenceServer::models.end()) {
+    InferenceServer::models.erase(elm);
+  }
+}
+
 
 auto InferenceServer::has_model(const std::string& name) -> bool {
-  return InferenceServer::models.find(name) == InferenceServer::models.end();
+  return InferenceServer::models.find(name) != InferenceServer::models.end();
 }
 
 
 template <typename... Args>
-auto infer(const std::string& name, Args&&... args) -> std::vector<torch::jit::IValue> {
+auto infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor> {
     torch::NoGradGuard no_grad;
     auto model = InferenceServer::models[name];
     std::vector<torch::jit::IValue> inputs = {
       InferenceServer::to_ivalue(std::forward<Args>(args))...
     };
-    auto output model->forward(inputs);
+    auto outputs = model.forward(inputs);
 
     if (outputs.isTuple()) {
       auto tuple_elements = outputs.toTuple()->elements();
-      std::vector<torch::jit::IValue> out_vec(tuple_elements.size());
+      std::vector<at::Tensor> out_vec(tuple_elements.size());
       for (size_t i = 0; i < tuple_elements.size(); ++i) {
         out_vec[i] = tuple_elements[i].toTensor();
       }
       return out_vec;
     }
 
-    return {output};
+    return std::vector<at::Tensor>{outputs.toTensor()};
 }
 
 
 template <typename... Args>
-static auto pack_and_infer(const std::string& name, Args&&... args) -> torch::jit::IValue {
+static auto pack_and_infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor> {
     return infer(name, args.unsqueeze(0)...);
 }
