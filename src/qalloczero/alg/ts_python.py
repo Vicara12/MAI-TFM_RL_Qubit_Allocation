@@ -41,12 +41,14 @@ class TSPythonEngine(TSEngine):
     self,
     n_qubits: int,
     core_caps: torch.Tensor,
-    core_conns: torch.Tensor
+    core_conns: torch.Tensor,
+    verbose: bool = False,
   ):
     self.n_qubits = n_qubits
     self.core_caps = core_caps
     self.core_conns = core_conns
     self.n_cores = core_conns.shape[0]
+    self.verbose = verbose
     
 
   def load_model(self, name: str, model: torch.nn.Module):
@@ -77,6 +79,9 @@ class TSPythonEngine(TSEngine):
       slice_idx = self.alloc_steps[self.root.allocation_step][0].item()
       qubit0 = self.alloc_steps[self.root.allocation_step][1].item()
       qubit1 = self.alloc_steps[self.root.allocation_step][2].item()
+
+      if self.verbose:
+        print(f" - Optimization step {step+1}/{self.n_steps}")
 
       if ret_train_data:
         self._store_train_data(tdata, step, slice_idx, qubit0, qubit1)

@@ -23,7 +23,7 @@ struct TreeSearch::Node {
   std::optional<at::Tensor> core_caps;
   std::optional<at::Tensor> policy;
 
-  auto print(int rec = 0) const -> void {
+  auto print(int rec = 0, bool simple = false) const -> void {
     std::cout << "NODE: " << this << std::endl
               << " - children:" << std::endl;
     if (children.has_value())
@@ -37,36 +37,38 @@ struct TreeSearch::Node {
               << " - alloc_step: " << alloc_step << std::endl
               << " - slice_idx: " << slice_idx << std::endl;
 
-    if (prev_allocs.has_value())
-      std::cout << " - prev_allocs: " << *prev_allocs << std::endl;
-    else
-      std::cout << " - prev_allocs: none" << std::endl;
-    
-    if (current_allocs.has_value())
-      std::cout << " - current_allocs: " << *current_allocs << std::endl;
-    else
-      std::cout << " - current_allocs: none" << std::endl;
-    
-    if (core_caps.has_value())
-      std::cout << " - core_caps: " << *core_caps << std::endl;
-    else
-      std::cout << " - core_caps: none" << std::endl;
-    
-    if (policy.has_value())
-      std::cout << " - policy: " << *policy << std::endl;
-    else
-      std::cout << " - policy: none" << std::endl;
+    if (not simple) {
+      if (prev_allocs.has_value())
+        std::cout << " - prev_allocs: " << *prev_allocs << std::endl;
+      else
+        std::cout << " - prev_allocs: none" << std::endl;
+      
+      if (current_allocs.has_value())
+        std::cout << " - current_allocs: " << *current_allocs << std::endl;
+      else
+        std::cout << " - current_allocs: none" << std::endl;
+      
+      if (core_caps.has_value())
+        std::cout << " - core_caps: " << *core_caps << std::endl;
+      else
+        std::cout << " - core_caps: none" << std::endl;
+      
+      if (policy.has_value())
+        std::cout << " - policy: " << *policy << std::endl;
+      else
+        std::cout << " - policy: none" << std::endl;
+    }
     
     if (rec != 0 and children.has_value()) {
       for (const auto& [_, node] : *children)
-        std::get<0>(node)->print(rec-1);
+        std::get<0>(node)->print(rec-1, simple);
     }
   }
 
 
   auto expanded() const -> bool {return children.has_value();}
 
-  auto value() const -> float {return (terminal? 0 : value_sum/visit_count);}
+  auto value() const -> float {return (terminal or (visit_count == 0) ? 0 : value_sum/visit_count);}
 
   auto get_child(int action) const -> std::shared_ptr<Node> {
     if (children) {
@@ -100,12 +102,14 @@ TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores)
 TreeSearch::TreeSearch(
   int n_qubits,
   const at::Tensor& core_capacities,
-  const at::Tensor& core_conns
+  const at::Tensor& core_conns,
+  bool verbose
 )
   : n_qubits_(n_qubits)
   , core_caps_(core_capacities)
   , core_conns_(core_conns)
   , n_cores_(core_conns.size(0))
+  , verbose_(verbose)
 {}
 
 
@@ -127,6 +131,9 @@ auto TreeSearch::optimize(
     int slice_idx = alloc_steps_[root_->alloc_step][0].item<int>();
     int qubit0 = alloc_steps_[root_->alloc_step][1].item<int>();
     int qubit1 = alloc_steps_[root_->alloc_step][2].item<int>();
+
+    if (verbose_)
+      std::cout << " - Optimization step " << (step+1) << "/" << n_steps_ << std::endl;
 
     if (ret_train_data)
       store_train_data(*tdata, step, slice_idx, qubit0, qubit1);
@@ -398,11 +405,13 @@ auto TreeSearch::backprop(
 
 
 auto TreeSearch::ucb(std::shared_ptr<const Node> node, int action) -> float {
-  return
-    node->get_child(action)->value() + node->action_cost(action)
-    - (*node->policy)[action].item<float>()
-      * std::sqrt(node->visit_count) / (1 + node->get_child(action)->visit_count)
-      * (cfg_.ucb_c1 + std::log(node->visit_count + cfg_.ucb_c2 + 1)/cfg_.ucb_c2);
+  float q_v = node->get_child(action)->value() + node->action_cost(action);
+  float prob_a = (*node->policy)[action].item<float>();
+  float vc = node->visit_count;
+  float vc_act = node->get_child(action)->visit_count;
+  float uncert = prob_a * std::sqrt(vc) / (1 + vc_act)
+    * (cfg_.ucb_c1 + std::log(vc + cfg_.ucb_c2 + 1)/cfg_.ucb_c2);
+  return q_v - uncert;
 }
 
 
@@ -414,11 +423,14 @@ auto TreeSearch::select_child(
 
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(current_node, action);
+    assert(not std::isnan(ucb_value));
+    assert(not std::isinf(ucb_value));
     if (ucb_value < min_ucb) {
       min_ucb = ucb_value;
       best_action = action;
     }
   }
+  assert(best_action != -1);
   return {current_node->get_child(best_action), best_action};
 }
 

@@ -2,7 +2,6 @@ import torch
 from utils.timer import Timer
 from utils.allocutils import solutionCost
 from sampler.randomcircuit import RandomCircuit
-# from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
 from utils.plotter import drawQubitAllocation
@@ -10,61 +9,6 @@ from qalloczero.alg.ts import TSConfig, TSTrainData
 from qalloczero.alg.ts_cpp import TSCppEngine
 from qalloczero.alg.ts_python import TSPythonEngine
 
-
-
-# def main():
-#   q_emb_size = 16
-#   encoder_shape = (16, 8, 8)
-#   core_caps = torch.tensor([4,4,4], dtype=int)
-#   core_con = torch.ones(size=(len(core_caps),len(core_caps)), dtype=int) - torch.eye(n=len(core_caps), dtype=int)
-#   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_con)
-#   q_embs = torch.nn.Parameter(torch.randn(hardware.n_physical_qubits, q_emb_size), requires_grad=True)
-#   dummy_q_emb = torch.nn.Parameter(torch.randn(q_emb_size), requires_grad=True)
-
-#   # circuit_encoder = GNNEncoder(
-#   #   hardware=hardware,
-#   #   nn_dims=encoder_shape,
-#   #   qubit_embs=q_embs
-#   # )
-#   circuit_encoder = None
-#   snap_enc = SnapEncModel(
-#     nn_dims=(16,8),
-#     hardware=hardware,
-#     qubit_embs=q_embs,
-#     dummy_qubit_emb=dummy_q_emb
-#   )
-#   pred_mod = PredictionModel(
-#      config=PredictionModel.Config(hw=hardware, circuit_emb_shape=8, mha_num_heads=4),
-#      qubit_embs=q_embs,
-#   )
-
-#   InferenceServer.addModel('circ_enc', circuit_encoder)
-#   InferenceServer.addModel("snap_enc", snap_enc)
-#   InferenceServer.addModel("pred_model", pred_mod)
-
-#   sampler = RandomCircuit(num_lq=sum(core_caps).item(), num_slices=10)
-#   mcts_config = MCTS.Config(target_tree_size=1024)
-
-#   azero_config = AlphaZero.Config(
-#     hardware=hardware,
-#     encoder_shape=encoder_shape,
-#     mcts_config=mcts_config
-#   )
-#   azero_train_cfg = AlphaZero.TrainConfig(
-#     train_iters=100,
-#     batch_size=3,
-#     sampler=sampler,
-#     lr=0.01,
-#     v_weight=1,
-#     logit_weight=1
-#   )
-#   azero = AlphaZero(config=azero_config, qubit_embs=q_embs)
-#   with Timer.get('t0'):
-#     azero.train(azero_train_cfg)
-
-  # cost = solutionCost(allocations,hardware.core_connectivity)
-  # print(f" -> cost={cost} time={Timer.get('t0').total_time} e_ratio={exploration_ratio}")
-  # drawQubitAllocation(allocations, core_caps, circuit.slice_gates)
 
 
 
@@ -153,17 +97,17 @@ def testing_pred_model():
 
 def test_cpp_engine():
   torch.manual_seed(42)
-  n_qubits = 4
-  n_cores  = 2
-  n_slices = 3
+  n_qubits = 16
+  n_slices = 4
+  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
+  n_cores = core_caps.shape[0]
   core_connectivity = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
-  core_caps = torch.tensor([2,2], dtype=torch.int)
   pred_model = PredictionModel(
     n_qubits=n_qubits,
     n_cores=core_connectivity.shape[0],
     core_connectivity=core_connectivity,
-    number_emb_size=4,
-    glimpse_size=8,
+    number_emb_size=8,
+    glimpse_size=64,
     n_heads=4,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
@@ -172,30 +116,34 @@ def test_cpp_engine():
   encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
   encoder.eval()
   embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
-  cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity)
-  py_engine = TSPythonEngine(n_qubits, core_caps, core_connectivity)
+  cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity, verbose=True)
+  py_engine = TSPythonEngine(n_qubits, core_caps, core_connectivity, verbose=True)
   cpp_engine.load_model("pred_model", pred_model)
   py_engine.load_model("pred_model", pred_model)
   cfg = TSConfig()
   train_data = False
   torch.manual_seed(42)
-  res_cpp = cpp_engine.optimize(
-    slice_adjm=circuit.adj_matrices,
-    circuit_embs=embs,
-    alloc_steps=circuit.alloc_steps,
-    cfg=cfg,
-    ret_train_data=train_data
-  )
-  print(f"{res_cpp = }")
+  print("Starting C++ optimization:")
+  with Timer.get('t1'):
+    res_cpp = cpp_engine.optimize(
+      slice_adjm=circuit.adj_matrices,
+      circuit_embs=embs,
+      alloc_steps=circuit.alloc_steps,
+      cfg=cfg,
+      ret_train_data=train_data
+    )
+  print(f"t={Timer.get('t1').time:.2f}s {res_cpp = }")
   torch.manual_seed(42)
-  py_engine = cpp_engine.optimize(
-    slice_adjm=circuit.adj_matrices,
-    circuit_embs=embs,
-    alloc_steps=circuit.alloc_steps,
-    cfg=cfg,
-    ret_train_data=train_data
-  )
-  print(f"{py_engine = }")
+  print("Starting Python optimization:")
+  with Timer.get('t2'):
+    py_engine = cpp_engine.optimize(
+      slice_adjm=circuit.adj_matrices,
+      circuit_embs=embs,
+      alloc_steps=circuit.alloc_steps,
+      cfg=cfg,
+      ret_train_data=train_data
+    )
+  print(f"t={Timer.get('t2').time:.2f}s {py_engine = }")
 
 
 
