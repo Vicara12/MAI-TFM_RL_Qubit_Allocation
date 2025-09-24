@@ -7,7 +7,7 @@ class QubitAllocationEnvironment:
   def __init__(self, circuit: Circuit, hardware: Hardware):
     self.circuit = circuit
     self.hardware = hardware
-    self.allocations = torch.empty(size=(self.circuit.n_qubits, self.circuit.n_slices), dtype=int)
+    self.allocations = torch.empty(size=(self.circuit.n_slices, self.circuit.n_qubits), dtype=int)
     self.reset()
   
 
@@ -32,7 +32,7 @@ class QubitAllocationEnvironment:
     assert not self.qubit_is_allocated[qubit], f"Tried to allocate qubit {qubit} twice"
     assert self.hardware.core_capacities[core] > 0, f"Tried to allocate to complete core {core}"
 
-    self.allocations[qubit, self.current_slice_] = core
+    self.allocations[self.current_slice_,qubit] = core
     self.qubit_is_allocated[qubit] = True
     self.qubits_to_allocate -= 1
 
@@ -40,17 +40,17 @@ class QubitAllocationEnvironment:
     if self.current_slice_ == 0:
       alloc_cost = 0
     else:
-      prev_core = self.allocations[qubit, self.current_slice_-1]
+      prev_core = self.allocations[self.current_slice_-1,qubit]
       alloc_cost = self.hardware.core_connectivity[prev_core,core].item()
 
     # If finished allocation of time slice
     if self.qubits_to_allocate == 0:
       # Check all gates have their qubits in the same core
       for gate in self.circuit.slice_gates[self.current_slice_]:
-        assert self.allocations[gate[0], self.current_slice_] == self.allocations[gate[1], self.current_slice_], \
+        assert self.allocations[self.current_slice_,gate[0]] == self.allocations[self.current_slice_,gate[1]], \
           (f"In time slice {self.current_slice_} allocated qubit {gate[0]} and {gate[0]} to cores "
-           f"{self.allocations[gate[0], self.current_slice_]} and "
-           f"{self.allocations[gate[1], self.current_slice_]}, but they belong to the same gate")
+           f"{self.allocations[self.current_slice_, gate[0]]} and "
+           f"{self.allocations[self.current_slice_, gate[1]]}, but they belong to the same gate")
         
       self.qubit_is_allocated = torch.tensor([False]*self.circuit.n_qubits, dtype=bool)
       self.qubits_to_allocate = self.circuit.n_qubits
@@ -72,7 +72,7 @@ class QubitAllocationEnvironment:
   @property
   def prev_slice_allocations(self) -> torch.Tensor:
     assert self.current_slice_ > 0, "No previous slice"
-    return self.allocations[:,self.current_slice_-1].squeeze()
+    return self.allocations[self.current_slice_-1,:].squeeze()
   
 
   @property

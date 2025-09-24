@@ -51,16 +51,15 @@ def drawQubitAllocation(qubit_allocation: torch.Tensor,
     """ Draws the flow of qubit allocations across columns (time steps).
     
     Parameters:
-      - qubit_allocation: tensor in which each column indicates a qubit allocation for a time step and
-          each row indicates which logical qubit is assigned to a certain physical qubit.
+      - qubit_allocation: tensor in which each row indicates a qubit allocation for a time step and
+          each column indicates which logical qubit is assigned to a certain physical qubit.
       - core_capacities (optional): size of each core. If provided the plot will contain horizontal
           lines separating the physical qubits of each core. It is assumed that the qubits of the core
           are consecutive.
       - circuit_slice_gates: follows the CircuitSampler convention.
     """
     Path = matplotlib.path.Path
-    num_steps = qubit_allocation.shape[1]
-    num_pq = qubit_allocation.shape[0]
+    (num_steps,num_pq) = qubit_allocation.shape
     
     # Extract all unique qubit IDs
     color_map = [matplotlib.cm.viridis(i / num_pq) for i in range(num_pq)]
@@ -83,7 +82,7 @@ def drawQubitAllocation(qubit_allocation: torch.Tensor,
     # Draw circuit gates in allocation
     if circuit_slice_gates is not None:
       for t, circuit_slice in enumerate(circuit_slice_gates):
-         alloc_slice = pq_allocations[:,t].squeeze().tolist()
+         alloc_slice = pq_allocations[t,:].squeeze().tolist()
          for gate in circuit_slice:
             pq0 = alloc_slice[gate[0]]
             pq1 = alloc_slice[gate[1]]
@@ -99,7 +98,7 @@ def drawQubitAllocation(qubit_allocation: torch.Tensor,
     # Draw nodes and flows
     last_q_positions = {}
     for t in range(num_steps):
-        column = pq_allocations[:,t].squeeze().tolist()
+        column = pq_allocations[t,:].squeeze().tolist()
         for qubit, y in enumerate(column):
             y = num_pq - int(y) - 1
             # Draw square
@@ -109,7 +108,7 @@ def drawQubitAllocation(qubit_allocation: torch.Tensor,
             ax.text(t, y, f"lq {qubit}", ha='center', va='center', fontsize=6, color='white')
 
             # Draw flow from previous timestep if allocated in a different qubit wrt prev time slice
-            if t != 0 and qubit_allocation[qubit,t-1] != qubit_allocation[qubit,t]:
+            if t != 0 and qubit_allocation[t-1,qubit] != qubit_allocation[t,qubit]:
               prev_y = last_q_positions[qubit]
               verts = [
                   (t-1, prev_y),

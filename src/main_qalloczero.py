@@ -179,6 +179,7 @@ def test_cpp_engine():
   cpp_engine.load_model("pred_model", pred_model)
   assert cpp_engine.has_model("pred_model")
   cfg = TseOptConfig()
+  torch.manual_seed(42)
   res=cpp_engine.optimize(
     slice_adjm=circuit.adj_matrices,
     circuit_embs=embs,
