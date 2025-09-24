@@ -23,9 +23,30 @@ public:
 
   // Variadic template function to map any number of input arguments to the forward call
   template <typename... Args>
-  static auto infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor>;
+  static auto infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor> {
+    torch::NoGradGuard no_grad;
+    auto model = InferenceServer::models[name];
+    std::vector<torch::jit::IValue> inputs = {
+      InferenceServer::to_ivalue(std::forward<Args>(args))...
+    };
+    auto outputs = model.forward(inputs);
+
+    if (outputs.isTuple()) {
+      auto tuple_elements = outputs.toTuple()->elements();
+      std::vector<at::Tensor> out_vec(tuple_elements.size());
+      for (size_t i = 0; i < tuple_elements.size(); ++i) {
+        out_vec[i] = tuple_elements[i].toTensor();
+      }
+      return out_vec;
+    }
+
+    return std::vector<at::Tensor>{outputs.toTensor()};
+  }
+
 
   // Infer method to call models that support batch with a single instance (unsqueeze all params)
   template <typename... Args>
-  static auto pack_and_infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor>;
+  static auto pack_and_infer(const std::string& name, Args&&... args) -> std::vector<at::Tensor> {
+    return infer(name, args.unsqueeze(0)...);
+  }
 };

@@ -53,7 +53,7 @@ public:
     const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
-    auto&& cfg, // OptConfig
+    const OptConfig &cfg,
     bool ret_train_data
   ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
 
@@ -83,7 +83,7 @@ private:
     const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
-    auto&& cfg
+    const OptConfig &cfg
   ) -> at::Tensor;
 
   auto iterate() -> std::tuple<int, float, at::Tensor, int>;

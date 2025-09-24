@@ -5,64 +5,63 @@ from sampler.randomcircuit import RandomCircuit
 from qalloczero.alg.mcts import MCTS
 from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.models.enccircuit import CircuitEncoder
-from qalloczero.models.snapshotenc import SnapEncModel
 from qalloczero.models.predmodel import PredictionModel
 from qalloczero.models.inferenceserver import InferenceServer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
-from qalloczero.alg.ts_cpp import TSCppEngine
+from qalloczero.alg.ts_cpp import TSCppEngine, TseOptConfig, TseTrainData
 
 
 
-def main():
-  q_emb_size = 16
-  encoder_shape = (16, 8, 8)
-  core_caps = torch.tensor([4,4,4], dtype=int)
-  core_con = torch.ones(size=(len(core_caps),len(core_caps)), dtype=int) - torch.eye(n=len(core_caps), dtype=int)
-  hardware = Hardware(core_capacities=core_caps, core_connectivity=core_con)
-  q_embs = torch.nn.Parameter(torch.randn(hardware.n_physical_qubits, q_emb_size), requires_grad=True)
-  dummy_q_emb = torch.nn.Parameter(torch.randn(q_emb_size), requires_grad=True)
+# def main():
+#   q_emb_size = 16
+#   encoder_shape = (16, 8, 8)
+#   core_caps = torch.tensor([4,4,4], dtype=int)
+#   core_con = torch.ones(size=(len(core_caps),len(core_caps)), dtype=int) - torch.eye(n=len(core_caps), dtype=int)
+#   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_con)
+#   q_embs = torch.nn.Parameter(torch.randn(hardware.n_physical_qubits, q_emb_size), requires_grad=True)
+#   dummy_q_emb = torch.nn.Parameter(torch.randn(q_emb_size), requires_grad=True)
 
-  # circuit_encoder = GNNEncoder(
-  #   hardware=hardware,
-  #   nn_dims=encoder_shape,
-  #   qubit_embs=q_embs
-  # )
-  circuit_encoder = None
-  snap_enc = SnapEncModel(
-    nn_dims=(16,8),
-    hardware=hardware,
-    qubit_embs=q_embs,
-    dummy_qubit_emb=dummy_q_emb
-  )
-  pred_mod = PredictionModel(
-     config=PredictionModel.Config(hw=hardware, circuit_emb_shape=8, mha_num_heads=4),
-     qubit_embs=q_embs,
-  )
+#   # circuit_encoder = GNNEncoder(
+#   #   hardware=hardware,
+#   #   nn_dims=encoder_shape,
+#   #   qubit_embs=q_embs
+#   # )
+#   circuit_encoder = None
+#   snap_enc = SnapEncModel(
+#     nn_dims=(16,8),
+#     hardware=hardware,
+#     qubit_embs=q_embs,
+#     dummy_qubit_emb=dummy_q_emb
+#   )
+#   pred_mod = PredictionModel(
+#      config=PredictionModel.Config(hw=hardware, circuit_emb_shape=8, mha_num_heads=4),
+#      qubit_embs=q_embs,
+#   )
 
-  InferenceServer.addModel('circ_enc', circuit_encoder)
-  InferenceServer.addModel("snap_enc", snap_enc)
-  InferenceServer.addModel("pred_model", pred_mod)
+#   InferenceServer.addModel('circ_enc', circuit_encoder)
+#   InferenceServer.addModel("snap_enc", snap_enc)
+#   InferenceServer.addModel("pred_model", pred_mod)
 
-  sampler = RandomCircuit(num_lq=sum(core_caps).item(), num_slices=10)
-  mcts_config = MCTS.Config(target_tree_size=1024)
+#   sampler = RandomCircuit(num_lq=sum(core_caps).item(), num_slices=10)
+#   mcts_config = MCTS.Config(target_tree_size=1024)
 
-  azero_config = AlphaZero.Config(
-    hardware=hardware,
-    encoder_shape=encoder_shape,
-    mcts_config=mcts_config
-  )
-  azero_train_cfg = AlphaZero.TrainConfig(
-    train_iters=100,
-    batch_size=3,
-    sampler=sampler,
-    lr=0.01,
-    v_weight=1,
-    logit_weight=1
-  )
-  azero = AlphaZero(config=azero_config, qubit_embs=q_embs)
-  with Timer.get('t0'):
-    azero.train(azero_train_cfg)
+#   azero_config = AlphaZero.Config(
+#     hardware=hardware,
+#     encoder_shape=encoder_shape,
+#     mcts_config=mcts_config
+#   )
+#   azero_train_cfg = AlphaZero.TrainConfig(
+#     train_iters=100,
+#     batch_size=3,
+#     sampler=sampler,
+#     lr=0.01,
+#     v_weight=1,
+#     logit_weight=1
+#   )
+#   azero = AlphaZero(config=azero_config, qubit_embs=q_embs)
+#   with Timer.get('t0'):
+#     azero.train(azero_train_cfg)
 
   # cost = solutionCost(allocations,hardware.core_connectivity)
   # print(f" -> cost={cost} time={Timer.get('t0').total_time} e_ratio={exploration_ratio}")
@@ -153,7 +152,46 @@ def testing_pred_model():
   print(torch.equal(vals_py, vals_cpp))
 
 
+def test_cpp_engine():
+  torch.manual_seed(42)
+  n_qubits=4
+  n_slices=3
+  core_connectivity = torch.tensor([
+    [0,1],
+    [1,0],
+  ], dtype=torch.float)
+  core_caps = torch.tensor([2,2], dtype=torch.int)
+  pred_model = PredictionModel(
+    n_qubits=n_qubits,
+    n_cores=core_connectivity.shape[0],
+    core_connectivity=core_connectivity,
+    number_emb_size=4,
+    glimpse_size=8,
+    n_heads=4,
+  )
+  sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
+  circuit = sampler.sample()
+  encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
+  encoder.eval()
+  embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
+  cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity)
+  assert not cpp_engine.has_model("pred_model")
+  cpp_engine.load_model("pred_model", pred_model)
+  assert cpp_engine.has_model("pred_model")
+  cfg = TseOptConfig()
+  res=cpp_engine.optimize(
+    slice_adjm=circuit.adj_matrices,
+    circuit_embs=embs,
+    alloc_steps=circuit.alloc_steps,
+    cfg=cfg,
+    ret_train_data=False
+  )
+  print(res)
+
+
+
 if __name__ == "__main__":
   # main()
   # testing_circuit_enc()
-  testing_pred_model()
+  # testing_pred_model()
+  test_cpp_engine()

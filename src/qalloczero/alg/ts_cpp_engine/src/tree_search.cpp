@@ -6,6 +6,8 @@
 #include <cassert>
 #include <cmath>
 
+using Slice = at::indexing::Slice;
+
 
 
 struct TreeSearch::Node {
@@ -20,6 +22,46 @@ struct TreeSearch::Node {
   std::optional<at::Tensor> current_allocs;
   std::optional<at::Tensor> core_caps;
   std::optional<at::Tensor> policy;
+
+  auto print(int rec = 0) const -> void {
+    std::cout << "NODE: " << this << std::endl
+              << " - children:" << std::endl;
+    if (children.has_value())
+      for (const auto& [action, node] : *children)
+        std::cout << "   + action " << action << " node " << std::get<0>(node) << " cost " << std::get<1>(node) << std::endl;
+    else
+      std::cout << "   None" << std::endl;
+    std::cout << " - terminal: " << (terminal ? "true" : "false") << std::endl
+              << " - value_sum: " << value_sum << std::endl
+              << " - visit count: " << visit_count << std::endl
+              << " - alloc_step: " << alloc_step << std::endl
+              << " - slice_idx: " << slice_idx << std::endl;
+
+    if (prev_allocs.has_value())
+      std::cout << " - prev_allocs: " << *prev_allocs << std::endl;
+    else
+      std::cout << " - prev_allocs: none" << std::endl;
+    
+    if (current_allocs.has_value())
+      std::cout << " - current_allocs: " << *current_allocs << std::endl;
+    else
+      std::cout << " - current_allocs: none" << std::endl;
+    
+    if (core_caps.has_value())
+      std::cout << " - core_caps: " << *core_caps << std::endl;
+    else
+      std::cout << " - core_caps: none" << std::endl;
+    
+    if (policy.has_value())
+      std::cout << " - policy: " << *policy << std::endl;
+    else
+      std::cout << " - policy: none" << std::endl;
+    
+    if (rec != 0 and children.has_value()) {
+      for (const auto& [_, node] : *children)
+        std::get<0>(node)->print(rec-1);
+    }
+  }
 
 
   auto expanded() const -> bool {return children.has_value();}
@@ -46,10 +88,10 @@ struct TreeSearch::Node {
 
 TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores)
   : qubits(at::empty({n_steps, 2}, at::kInt))
-  , prev_allocs(at::empty({n_steps, n_qubits}, at::kInt))
-  , curr_allocs(at::empty({n_steps, n_qubits}, at::kInt))
-  , core_caps(at::empty({n_steps, n_cores}, at::kInt))
-  , slice_idx(at::empty({n_steps, 1}, at::kInt))
+  , prev_allocs(at::empty({n_steps, n_qubits}, at::kLong))
+  , curr_allocs(at::empty({n_steps, n_qubits}, at::kLong))
+  , core_caps(at::empty({n_steps, n_cores}, at::kLong))
+  , slice_idx(at::empty({n_steps, 1}, at::kLong))
   , logits(at::empty({n_steps, n_cores}, at::kFloat))
   , value(at::empty({n_steps, 1}, at::kFloat))
 {}
@@ -71,7 +113,7 @@ auto TreeSearch::optimize(
   const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
-  auto&& cfg,
+  const OptConfig &cfg,
   bool ret_train_data
 ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>> {
   at::Tensor allocs = initialize_search(
@@ -97,14 +139,14 @@ auto TreeSearch::optimize(
       allocs[slice_idx][qubit1] = action;
     
     if (ret_train_data) {
-      tdata->logits.index_put_({step}, logits);
+      tdata->logits.index_put_({int(step)}, logits);
       tdata->value[step][0] = action_cost;
     }
   }
 
   if (ret_train_data) {
     // Compute total remaining cost for each step and normalize
-    for (size_t step = n_steps_-2; step >= 0; step--) {
+    for (int step = n_steps_-2; step >= 0; step--) {
       tdata->value[step][0] += tdata->value[step+1][0];
       float rem_gates = alloc_steps_[step+1][3].item<float>();
       tdata->value[step+1][0] /= (rem_gates+1);
@@ -142,16 +184,16 @@ auto TreeSearch::initialize_search(
   const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
-  auto&& cfg
+  const OptConfig &cfg
 ) -> at::Tensor {
   slice_adjm_ = slice_adjm;
   circuit_embs_ = circuit_embs;
   alloc_steps_ = alloc_steps;
-  cfg_ = std::forward(cfg);
+  cfg_ = cfg;
   int n_slices = slice_adjm_.size(0);
   n_steps_ = alloc_steps.size(0);
   root_ = build_root();
-  at::Tensor allocs = at::empty({n_qubits_, n_slices}, at::kInt);
+  at::Tensor allocs = at::empty({n_slices, n_qubits_}, at::kInt);
   return allocs;
 }
 
@@ -224,15 +266,15 @@ auto TreeSearch::new_policy_and_val(
   auto qubits = at::tensor(
     {this_alloc_stp[1].item<int>(), this_alloc_stp[2].item<int>()},
     torch::kInt32);
-  
+
   auto model_out = InferenceServer::pack_and_infer(
     "pred_model",
     qubits,
-    node->prev_allocs,
-    node->current_allocs,
-    node->core_caps,
-    this->circuit_embs_[node->slice_idx],
-    this->slice_adjm_[node->slice_idx]
+    *node->prev_allocs,
+    *node->current_allocs,
+    *node->core_caps,
+    this->circuit_embs_.index({node->slice_idx, Slice(), Slice()}),
+    this->slice_adjm_.index({node->slice_idx, Slice(), Slice()})
   );
 
   // Get unnormalized value
@@ -266,8 +308,8 @@ auto TreeSearch::new_policy_and_val(
 
 auto TreeSearch::build_root() -> std::shared_ptr<Node> {
   auto root = std::make_shared<Node>();
-  root->current_allocs = -1*at::ones({n_cores_}, torch::kInt32);
-  root->prev_allocs    = -1*at::ones({n_cores_}, torch::kInt32);
+  root->current_allocs = -1*at::ones({n_qubits_}, torch::kLong);
+  root->prev_allocs    = -1*at::ones({n_qubits_}, torch::kLong);
   root->core_caps = core_caps_;
   root->alloc_step = 0;
   root->slice_idx  = 0;
@@ -288,7 +330,7 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
   bool pre_terminal = (node->alloc_step == (n_steps_ - 1));
   int slice_idx_children;
   if (not pre_terminal)
-    slice_idx_children = alloc_steps_[node->alloc_step][0].item<int>();
+    slice_idx_children = alloc_steps_[node->alloc_step+1][0].item<int>();
   
   for (size_t action = 0; action < n_cores_; action++) {
     if ((*node->policy)[action].item<float>() < 1e-5)
@@ -296,9 +338,11 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
     float cost = action_cost(node, action);
     auto child = std::make_shared<Node>();
     (*node->children)[action] = {child, cost};
-    if (pre_terminal)
+    if (pre_terminal) {
+      child->terminal = true;
       continue;
-    
+    }
+        
     child->alloc_step = node->alloc_step + 1;
     child->slice_idx = slice_idx_children;
     if (child->slice_idx != node->slice_idx) {
@@ -346,7 +390,7 @@ auto TreeSearch::backprop(
 ) -> void {
   std::get<0>(search_path.back())->visit_count += 1;
 
-  for (size_t i = search_path.size() - 2; i >= 0; i--) {
+  for (int i = search_path.size() - 2; i >= 0; i--) {
     auto node = std::get<0>(search_path[i]);
     auto next_node = std::get<0>(search_path[i+1]);
     int action = std::get<1>(search_path[i+1]);

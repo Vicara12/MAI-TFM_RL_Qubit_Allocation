@@ -1,6 +1,5 @@
 from typing import TypeAlias, Tuple, Union
 import torch
-from torch_geometric.utils import dense_to_sparse
 from dataclasses import dataclass
 
 
@@ -13,24 +12,37 @@ CircSliceType: TypeAlias = Tuple[GateType, ...]
 class Circuit:
   slice_gates: Tuple[CircSliceType, ...]
   n_qubits: int
-  # n_gates: total number of gates in the circuit
-  # alloc_steps: refer to the function __getAllocOrder for info on this attribute
-  # n_steps: len(alloc_steps)
-  # adj_matrices: per-slice adjacency matrices of qubit interactions
 
-
-  def __post_init__(self):
-    self.n_gates = self.__get_N_gates()
-    self.alloc_steps = self.__get_alloc_order()
-    self.n_steps = len(self.alloc_steps)
-    self.adj_matrices = self.__get_adj_matrices()
-
-
-  def __get_N_gates(self) -> int:
-    return sum(len(slice_i) for slice_i in self.slice_gates)
+  # Some more attribute declarations that are only computed when required (lazy
+  # initialization), as these can be expensive to compute and not always needed
+  @property
+  def n_gates(self) -> int:
+    if not hasattr(self, "n_gates_"):
+      self.n_gates_ = self._get_N_gates()
+    return self.n_gates_
+    
+  @property
+  def alloc_steps(self) -> torch.Tensor:
+    if not hasattr(self, "alloc_steps_"):
+      self.alloc_steps_ = self._get_alloc_order()
+    return self.alloc_steps_
   
+  @property
+  def n_steps(self) -> int:
+    if not hasattr(self, "n_steps_"):
+        self.n_steps_ = self.alloc_steps.shape[0]
+    return self.n_steps_
+  
+  @property
+  def adj_matrices(self) -> torch.Tensor:
+    if not hasattr(self, "adj_matrices_"):
+      self.adj_matrices_ = self._get_adj_matrices()
+    return self.adj_matrices_
 
-  def __get_adj_matrices(self) -> torch.Tensor:
+  def _get_N_gates(self) -> int:
+    return sum(len(slice_i) for slice_i in self.slice_gates)
+
+  def _get_adj_matrices(self) -> torch.Tensor:
     matrices = torch.eye(self.n_qubits).repeat(self.n_slices,1,1)
     for s_i, slice in enumerate(self.slice_gates):
       for (a,b) in slice:
@@ -38,28 +50,37 @@ class Circuit:
         matrices[s_i,a,a] = matrices[s_i,b,b] = 0
     return matrices
 
-
-  def __get_alloc_order(self) -> Tuple[Tuple[int, Union[GateType, Tuple[int]]], ...]:
+  def _get_alloc_order(self) -> torch.Tensor:
     ''' Get the allocation order of te qubits for a given circuit.
 
-    Returns a tuple with the allocations to be performed. Each tuple element is another tuple that
-    contains the slice the allocation corresponds to; the qubits involved in the allocation, two
-    if the qubits belong to a gate in that time slice or a single one if they don't; and the number
-    of gates that remains to be allocated.
+    Returns a tensor with the allocations to be performed. Each row contains 4
+    columns: the first item indicates the slice index of the allocation; the
+    second the first qubit to be allocated; the third the second qubit to be
+    allocated or -1 if single qubit allocation step; and the fourth column the
+    number of gates that remain to be allocated.
     '''
     gate_counter = 0
-    allocations = []
+    n_steps = self.n_slices*self.n_qubits - self.n_gates
+    allocations = torch.empty([n_steps, 4], dtype=torch.int32)
+    alloc_step = 0
     for slice_i, slice in enumerate(self.slice_gates):
       free_qubits = set(range(self.n_qubits))
       for gate in slice:
-        allocations.append((slice_i, gate, self.n_gates - gate_counter))
+        allocations[alloc_step,0] = slice_i
+        allocations[alloc_step,1] = gate[0]
+        allocations[alloc_step,2] = gate[1]
+        allocations[alloc_step,3] = self.n_gates - gate_counter
         gate_counter += 1
         free_qubits -= set(gate) # Remove qubits in gates from set of free qubits
+        alloc_step += 1
       for q in free_qubits:
-        allocations.append((slice_i, (q,), self.n_gates - gate_counter))
-    return tuple(allocations)
+        allocations[alloc_step,0] = slice_i
+        allocations[alloc_step,1] = q
+        allocations[alloc_step,2] = -1
+        allocations[alloc_step,3] = self.n_gates - gate_counter
+        alloc_step += 1
+    return allocations
   
-
   @property
   def n_slices(self) -> int:
     return len(self.slice_gates)
@@ -85,7 +106,6 @@ class Hardware:
       f"Core connectivity should be a square matrix, found matrix of shape {self.core_capacities.shape}"
     assert torch.all(self.core_connectivity == self.core_connectivity.T), \
       "Core connectivity matrix should be symmetric"
-    self.sparse_core_con, self.sparse_core_ws = dense_to_sparse(self.core_connectivity.float())
 
   
   @property

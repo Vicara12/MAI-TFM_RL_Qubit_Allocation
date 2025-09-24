@@ -126,7 +126,7 @@ class PredictionModel(torch.nn.Module):
     swap_cost[has_prev_core] = self.core_connectivity[prev_cores] # [B,C]
     # For double qubit allocs, compute the cost of allocation of the second
     double_qubits = (qubits[:,1] != -1) & has_prev_core
-    prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].T] # [b]
+    prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()] # [b]
     swap_cost[double_qubits] += self.core_connectivity[prev_cores,:] # [b,C]
 
     # Encode scalars (allocation cost and core capacities) into embedding vectors
@@ -177,7 +177,6 @@ class PredictionModel(torch.nn.Module):
         [alloc_ctx_emb_size] with the information of the rest of the circuit, the current slice
         and qubits to be allocated.
     '''
-    device = circuit_emb.device
     (B,Q,_) = circuit_emb.shape
     double_qubits = (qubits[:,1] != -1)
 
@@ -187,7 +186,6 @@ class PredictionModel(torch.nn.Module):
     qubit_matrix[double_qubits, qubits[double_qubits,1], qubits[double_qubits,0]] = 1
     # Write 1 to (i,i) position for allocations of a single qubit
     qubit_matrix[~double_qubits, qubits[~double_qubits,0], qubits[~double_qubits,0]] = 1
-
     input_data = torch.cat( #[B,3,Q*Q]
       [circuit_emb.reshape(B,1,Q*Q), slice_adj_mat.reshape(B,1,Q*Q), qubit_matrix.reshape(B,1,Q*Q)],
       dim=1,
@@ -251,4 +249,4 @@ class PredictionModel(torch.nn.Module):
     # This will never be false, but is needed to tell jitter that the tensor is not optional
     assert attn_weights is not None, "Attention weights returned None"
     value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1))
-    return attn_weights, value
+    return attn_weights.squeeze(1), value

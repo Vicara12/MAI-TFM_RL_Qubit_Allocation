@@ -17,8 +17,8 @@ public:
     : ts_(n_qubits, core_caps, core_conns)
     {}
 
-    auto load_model(const std::string &path) -> void {
-        InferenceServer::add_model("pred_model", path);
+    auto load_model(const std::string &name, const std::string &path) -> void {
+        InferenceServer::add_model(name, path);
     }
 
     auto has_model(const std::string &name) -> bool {
@@ -70,7 +70,7 @@ PYBIND11_MODULE(ts_cpp_engine, m) {
         .def_readwrite("logits",      &TreeSearch::TrainData::logits)
         .def_readwrite("value",       &TreeSearch::TrainData::value);
     
-    pybind11::class_<TSEngine>(m, "TseTrainData")
+    pybind11::class_<TSEngine>(m, "TSEngine")
         .def(py::init<int, const at::Tensor&, const at::Tensor&>())
         .def("load_model", &TSEngine::load_model)
         .def("has_model", &TSEngine::has_model)
