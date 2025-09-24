@@ -28,6 +28,10 @@ class InferenceServer:
   def hasModel(name: str) -> bool:
     return name in InferenceServer.MODELS.keys()
   
+  @staticmethod
+  def removeModel(name: str):
+    if name in InferenceServer.MODELS.keys():
+      del InferenceServer.MODELS[name]
 
   @staticmethod
   def model(name: str) -> Module:
@@ -39,7 +43,12 @@ class InferenceServer:
     if not InferenceServer.hasModel(model_name):
       raise Exception(f"No model called \"{model_name}\" has been loaded in the InferenceServer")
     model_obj = InferenceServer.MODELS[model_name]
+    if unpack:
+      args = [a.unsqueeze(0) for a in args]
+      kwargs = {k:v.unsqueeze(0) for k,v in kwargs.items()}
     result = model_obj.model(*args, **kwargs)
     if unpack:
-      return result[0]
+      if isinstance(result, tuple):
+        return tuple(r.squeeze(0) for r in result)
+      return result.squeeze(0)
     return result

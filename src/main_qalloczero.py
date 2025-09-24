@@ -2,14 +2,13 @@ import torch
 from utils.timer import Timer
 from utils.allocutils import solutionCost
 from sampler.randomcircuit import RandomCircuit
-from qalloczero.alg.mcts import MCTS
-from qalloczero.alg.alphazero import AlphaZero
+# from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
-from qalloczero.models.inferenceserver import InferenceServer
-from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
-from qalloczero.alg.ts_cpp import TSCppEngine, TseOptConfig, TseTrainData
+from qalloczero.alg.ts import TSConfig, TSTrainData
+from qalloczero.alg.ts_cpp import TSCppEngine
+from qalloczero.alg.ts_python import TSPythonEngine
 
 
 
@@ -154,12 +153,10 @@ def testing_pred_model():
 
 def test_cpp_engine():
   torch.manual_seed(42)
-  n_qubits=4
-  n_slices=3
-  core_connectivity = torch.tensor([
-    [0,1],
-    [1,0],
-  ], dtype=torch.float)
+  n_qubits = 4
+  n_cores  = 2
+  n_slices = 3
+  core_connectivity = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   core_caps = torch.tensor([2,2], dtype=torch.int)
   pred_model = PredictionModel(
     n_qubits=n_qubits,
@@ -171,23 +168,34 @@ def test_cpp_engine():
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuit = sampler.sample()
+  print(f"{circuit.slice_gates = }")
   encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
   encoder.eval()
   embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
   cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity)
-  assert not cpp_engine.has_model("pred_model")
+  py_engine = TSPythonEngine(n_qubits, core_caps, core_connectivity)
   cpp_engine.load_model("pred_model", pred_model)
-  assert cpp_engine.has_model("pred_model")
-  cfg = TseOptConfig()
+  py_engine.load_model("pred_model", pred_model)
+  cfg = TSConfig()
+  train_data = False
   torch.manual_seed(42)
-  res=cpp_engine.optimize(
+  res_cpp = cpp_engine.optimize(
     slice_adjm=circuit.adj_matrices,
     circuit_embs=embs,
     alloc_steps=circuit.alloc_steps,
     cfg=cfg,
-    ret_train_data=False
+    ret_train_data=train_data
   )
-  print(res)
+  print(f"{res_cpp = }")
+  torch.manual_seed(42)
+  py_engine = cpp_engine.optimize(
+    slice_adjm=circuit.adj_matrices,
+    circuit_embs=embs,
+    alloc_steps=circuit.alloc_steps,
+    cfg=cfg,
+    ret_train_data=train_data
+  )
+  print(f"{py_engine = }")
 
 
 

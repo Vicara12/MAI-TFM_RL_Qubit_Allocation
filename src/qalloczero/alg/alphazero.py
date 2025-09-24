@@ -3,7 +3,7 @@ from typing import Tuple, List, Union
 from dataclasses import dataclass
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware, GateType
-from qalloczero.alg.mcts import MCTS
+from qalloczero.alg.ts_python import MCTS
 from qalloczero.models.inferenceserver import InferenceServer
 from utils.environment import QubitAllocationEnvironment
 from utils.allocutils import solutionCost

@@ -57,8 +57,7 @@ public:
     bool ret_train_data
   ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
 
-  ~TreeSearch();
-
+  
 private:
 
   struct Node;

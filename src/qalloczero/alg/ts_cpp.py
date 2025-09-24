@@ -2,11 +2,11 @@ from typing import Tuple, Optional
 from os import remove
 from time import time
 import torch
-from dataclasses import dataclass
+from qalloczero.alg.ts import (TSEngine, TSConfig, TSTrainData)
 from qalloczero.alg.ts_cpp_engine.build.ts_cpp_engine import (
-  TSEngine,
-  TseOptConfig,
-  TseTrainData
+  TSEngine as TSCppEngineInterface,
+  TseOptConfig as TseCppOptConfig,
+  TseTrainData as TseCppTrainData
 )
 
 
@@ -18,7 +18,7 @@ class TSCppEngine:
     core_caps: torch.Tensor,
     core_cons: torch.Tensor
   ):
-    self.cpp_engine = TSEngine(n_qubits, core_caps, core_cons)
+    self.cpp_engine = TSCppEngineInterface(n_qubits, core_caps, core_cons)
   
   def load_model(self, name: str, model: torch.nn.Module):
     scripted_model = torch.jit.script(model)
@@ -41,13 +41,42 @@ class TSCppEngine:
       slice_adjm: torch.Tensor,
       circuit_embs: torch.Tensor,
       alloc_steps: torch.Tensor,
-      cfg: TseOptConfig,
+      cfg: TSConfig,
       ret_train_data: bool
-  ) -> Tuple[torch.Tensor, int, float, Optional[TseTrainData]]:
-    return self.cpp_engine.optimize(
+  ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
+    allocs, n_exp_nodes, expl_r, tdata = self.cpp_engine.optimize(
       slice_adjm,
       circuit_embs,
       alloc_steps,
-      cfg,
+      TSCppEngine._convert_cfg(cfg),
       ret_train_data
+    )
+    return allocs, n_exp_nodes, expl_r, TSCppEngine._convert_train_data(tdata)
+  
+  @staticmethod
+  def _convert_cfg(cfg: TSConfig) -> TseCppOptConfig:
+    new_cfg = TseCppOptConfig()
+    new_cfg.target_tree_size = cfg.target_tree_size
+    new_cfg.noise = cfg.noise
+    new_cfg.dirichlet_alpha = cfg.dirichlet_alpha
+    new_cfg.discount_factor = cfg.discount_factor
+    new_cfg.action_sel_temp = cfg.action_sel_temp
+    new_cfg.ucb_c1 = cfg.ucb_c1
+    new_cfg.ucb_c2 = cfg.ucb_c2
+    return new_cfg
+  
+  @staticmethod
+  def _convert_train_data(
+    tdata: Optional[TseCppTrainData]
+  ) -> Optional[TSTrainData]:
+    if tdata is None:
+      return None
+    return TSTrainData(
+      qubits = tdata.qubits,
+      prev_allocs = tdata.prev_allocs,
+      curr_allocs = tdata.curr_allocs,
+      core_caps = tdata.core_caps,
+      slice_idx = tdata.slice_idx,
+      logits = tdata.logits,
+      value = tdata.value,
     )

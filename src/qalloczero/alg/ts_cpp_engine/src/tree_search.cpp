@@ -198,10 +198,6 @@ auto TreeSearch::initialize_search(
 }
 
 
-TreeSearch::~TreeSearch() {
-}
-
-
 auto TreeSearch::iterate() -> std::tuple<int, float, at::Tensor, int> {
   int num_sims = cfg_.target_tree_size - root_->visit_count;
   for (int i = 0; i < num_sims; i++) {
