@@ -35,7 +35,8 @@ public:
     int n_qubits,
     const at::Tensor& core_capacities,
     const at::Tensor& core_conns,
-    bool verbose
+    bool verbose,
+    std::string device_
   );
 
   /**
@@ -63,6 +64,7 @@ private:
 
   struct Node;
   bool verbose_;
+  std::string device_;
   int n_qubits_;
   int n_cores_;
   int n_steps_;
@@ -93,7 +95,15 @@ private:
     std::shared_ptr<const Node> node
   ) -> std::tuple<int, at::Tensor>;
 
-  auto new_policy_and_val(std::shared_ptr<const Node> node) -> std::tuple<std::optional<at::Tensor>, float>;
+  auto new_policy_and_val(
+    int q0,
+    int q1,
+    int remaining_gates,
+    int slice_idx,
+    const at::Tensor &prev_allocs,
+    const at::Tensor &curr_allocs,
+    const at::Tensor &core_caps
+  ) -> std::tuple<at::Tensor, at::Tensor>;
 
   auto build_root() -> std::shared_ptr<Node>;
 

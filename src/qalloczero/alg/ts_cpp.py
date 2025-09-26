@@ -18,9 +18,10 @@ class TSCppEngine:
     core_caps: torch.Tensor,
     core_cons: torch.Tensor,
     verbose: bool = False,
+    device: str = "cpu"
   ):
     self.cpp_engine = TSCppEngineInterface(
-      n_qubits, core_caps, core_cons, verbose)
+      n_qubits, core_caps, core_cons, verbose, device)
   
   def load_model(self, name: str, model: torch.nn.Module):
     scripted_model = torch.jit.script(model)

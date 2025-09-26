@@ -103,14 +103,18 @@ TreeSearch::TreeSearch(
   int n_qubits,
   const at::Tensor& core_capacities,
   const at::Tensor& core_conns,
-  bool verbose
+  bool verbose,
+  std::string device
 )
   : n_qubits_(n_qubits)
   , core_caps_(core_capacities)
   , core_conns_(core_conns)
   , n_cores_(core_conns.size(0))
   , verbose_(verbose)
-{}
+  , device_(device)
+{
+  core_caps_.to(device_);
+}
 
 
 auto TreeSearch::optimize(
@@ -197,6 +201,8 @@ auto TreeSearch::initialize_search(
   circuit_embs_ = circuit_embs;
   alloc_steps_ = alloc_steps;
   cfg_ = cfg;
+  slice_adjm_.to(device_);
+  circuit_embs_.to(device_);
   int n_slices = slice_adjm_.size(0);
   n_steps_ = alloc_steps.size(0);
   root_ = build_root();
@@ -259,51 +265,42 @@ auto TreeSearch::select_action(std::shared_ptr<const Node> node) -> std::tuple<i
 
 
 auto TreeSearch::new_policy_and_val(
-  std::shared_ptr<const Node> node
-) -> std::tuple<std::optional<at::Tensor>, float> {
-  if (node->terminal)
-    return {std::nullopt, 0.0f};
-  
-  auto this_alloc_stp = alloc_steps_[node->alloc_step];
+  int q0,
+  int q1,
+  int remaining_gates,
+  int slice_idx,
+  const at::Tensor &prev_allocs, // [Q]
+  const at::Tensor &curr_allocs, // [B,Q]
+  const at::Tensor &core_caps    // [B,C]
+) -> std::tuple<at::Tensor, at::Tensor> {
+  auto qubits = at::tensor({q0, q1}, torch::kInt32).to(device_);
+  int batch = curr_allocs.size(0);
 
-  auto qubits = at::tensor(
-    {this_alloc_stp[1].item<int>(), this_alloc_stp[2].item<int>()},
-    torch::kInt32);
-
-  auto model_out = InferenceServer::pack_and_infer(
+  auto model_out = InferenceServer::infer(
     "pred_model",
-    qubits,
-    *node->prev_allocs,
-    *node->current_allocs,
-    *node->core_caps,
-    this->circuit_embs_.index({node->slice_idx, Slice(), Slice()}),
-    this->slice_adjm_.index({node->slice_idx, Slice(), Slice()})
+    qubits.expand({batch,2}),
+    prev_allocs.expand({batch,n_qubits_}),
+    curr_allocs,
+    core_caps,
+    this->circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_}),
+    this->slice_adjm_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_})
   );
 
   // Get unnormalized value
-  float norm_val = model_out[1].item<float>();
-  float remaining_gates = this_alloc_stp[3].item<float>();
-  float val = norm_val*(remaining_gates + 1);
+  at::Tensor val = model_out[1]*(remaining_gates + 1);
 
   // Get policy (core allocation probabilities) with added noise
-  at::Tensor pol = model_out[0].squeeze(0);
+  at::Tensor pol = model_out[0];
   auto dir_noise = at::_sample_dirichlet(
     cfg_.dirichlet_alpha * torch::ones_like(pol));
   pol = (1 - cfg_.noise)*pol + cfg_.noise*dir_noise;
 
   // Set probability of allocation of cores without enough space to zero and normalize
   int n_qubits = (qubits[1].item<int>() == -1 ? 1 : 2);
-  auto valid_moves_mask = *node->core_caps >= n_qubits;
+  auto valid_moves_mask = core_caps >= n_qubits;
   pol.index_put_({~valid_moves_mask}, at::tensor(0.f));
-  float prob_sum = pol.sum().item<float>();
-  // If no probability mass (sum ~ 0) assign uniform probability to all valid moves
-  if (prob_sum < 1e-5) {
-    pol = at::zeros_like(pol);
-    float n_valid_cores = valid_moves_mask.sum().item<float>();
-    pol.index_put_({valid_moves_mask}, at::tensor(1/n_valid_cores));
-  } else {
-    pol /= prob_sum;
-  }
+  at::Tensor prob_sum = pol.sum(-1).unsqueeze(1);
+  pol /= prob_sum;
 
   return {pol, val};
 }
@@ -311,12 +308,22 @@ auto TreeSearch::new_policy_and_val(
 
 auto TreeSearch::build_root() -> std::shared_ptr<Node> {
   auto root = std::make_shared<Node>();
-  root->current_allocs = -1*at::ones({n_qubits_}, torch::kLong);
-  root->prev_allocs    = -1*at::ones({n_qubits_}, torch::kLong);
+  root->current_allocs = -1*at::ones({n_qubits_}, torch::kLong).to(device_);
+  root->prev_allocs    = -1*at::ones({n_qubits_}, torch::kLong).to(device_);
   root->core_caps = core_caps_;
   root->alloc_step = 0;
   root->slice_idx  = 0;
-  std::tie(root->policy, root->value_sum) = new_policy_and_val(root);
+  auto [pol, val] = new_policy_and_val(
+    alloc_steps_[0][1].item<int>(),
+    alloc_steps_[0][2].item<int>(),
+    alloc_steps_[0][3].item<int>(),
+    0,
+    *root->prev_allocs,
+    root->current_allocs->unsqueeze(0),
+    root->core_caps->unsqueeze(0)
+  );
+  root->policy = pol[0];
+  root->value_sum = val[0].item<float>();
   return root;
 }
 
@@ -327,6 +334,7 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
   node->children.emplace(); // Initialize empty dict
   int qubit0 = alloc_steps_[node->alloc_step][1].item<int>();
   int qubit1 = alloc_steps_[node->alloc_step][2].item<int>();
+  int remaining_gates = alloc_steps_[node->alloc_step][3].item<int>();
 
   // The prev to terminal node has no next step, but it does have children which
   // contains the cost of each of the actions that can be taken from it
@@ -334,6 +342,10 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
   int slice_idx_children;
   if (not pre_terminal)
     slice_idx_children = alloc_steps_[node->alloc_step+1][0].item<int>();
+  
+  std::vector<at::Tensor> curr_allocs_v;
+  std::vector<at::Tensor> core_caps_v;
+  std::vector<std::shared_ptr<Node>> children_v;
   
   for (size_t action = 0; action < n_cores_; action++) {
     if ((*node->policy)[action].item<float>() < 1e-5)
@@ -349,7 +361,7 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
     child->alloc_step = node->alloc_step + 1;
     child->slice_idx = slice_idx_children;
     if (child->slice_idx != node->slice_idx) {
-      child->current_allocs = -1 * at::ones_like(*node->current_allocs);
+      child->current_allocs = -1 * at::ones_like(*node->current_allocs).to(device_);
       child->prev_allocs = node->current_allocs->clone();
       (*child->prev_allocs)[qubit0] = action;
       if (qubit1 != -1)
@@ -365,7 +377,26 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
       (*child->core_caps)[action] -= (qubit1 == -1 ? 1 : 2);
       assert((*child->core_caps)[action].item<int>() >= 0); // Not enough space in core to expand
     }
-    std::tie(child->policy, child->value_sum) = new_policy_and_val(child);
+
+    curr_allocs_v.push_back(*child->current_allocs);
+    core_caps_v.push_back(*child->core_caps);
+    children_v.push_back(child);
+  }
+
+  if (not children_v.empty()) {
+    auto [pols, vals] = new_policy_and_val(
+      qubit0,
+      qubit1,
+      remaining_gates,
+      slice_idx_children,
+      *children_v[0]->prev_allocs, // All children have the same prev_allocs
+      at::stack(curr_allocs_v, 0),
+      at::stack(core_caps_v, 0)
+    );
+    for (int i = 0; i < children_v.size(); i++) {
+      children_v[i]->policy = pols[i];
+      children_v[i]->value_sum = vals[i].item<float>();
+    }
   }
 }
 

@@ -14,8 +14,10 @@ public:
         int n_qubits,
         const at::Tensor& core_caps,
         const at::Tensor& core_conns,
-        bool verbose)
-    : ts_(n_qubits, core_caps, core_conns, verbose)
+        bool verbose,
+        std::string device
+    )
+    : ts_(n_qubits, core_caps, core_conns, verbose, device)
     {}
 
     auto load_model(const std::string &name, const std::string &path) -> void {
@@ -72,7 +74,7 @@ PYBIND11_MODULE(ts_cpp_engine, m) {
         .def_readwrite("value",       &TreeSearch::TrainData::value);
     
     pybind11::class_<TSEngine>(m, "TSEngine")
-        .def(py::init<int, const at::Tensor&, const at::Tensor&, bool>())
+        .def(py::init<int, const at::Tensor&, const at::Tensor&, bool, std::string>())
         .def("load_model", &TSEngine::load_model)
         .def("has_model", &TSEngine::has_model)
         .def("rm_model", &TSEngine::rm_model)
