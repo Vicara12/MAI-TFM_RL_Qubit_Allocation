@@ -234,7 +234,7 @@ class TSPythonEngine(TSEngine):
 
   def __buildRoot(self) -> Node:
     root = TSPythonEngine.Node(
-      current_allocs = -1*torch.ones(size=(self.circuit.n_qubits,), dtype=int),
+      current_allocs = self.n_cores*torch.ones(size=(self.circuit.n_qubits,), dtype=int),
       prev_allocs = None,
       core_caps = self.core_caps,
       allocation_step = 0,
@@ -270,7 +270,7 @@ class TSPythonEngine(TSEngine):
       child.allocation_step = node.allocation_step+1
       child.current_slice = slice_idx_children
       if child.current_slice != node.current_slice:
-        child.current_allocs = -1*torch.ones_like(node.current_allocs)
+        child.current_allocs = self.n_cores*torch.ones_like(node.current_allocs)
         child.prev_allocs = node.current_allocs.clone()
         child.prev_allocs[qubit0,] = action
         if qubit1 != -1:

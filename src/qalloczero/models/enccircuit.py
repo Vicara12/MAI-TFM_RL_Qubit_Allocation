@@ -68,8 +68,6 @@ class CircuitEncoder(torch.nn.Module):
     in_seq = pos_emb + adjacency_matrices
     out_seq = pos_emb + later_embeddings
     mask = CircuitEncoder.get_transformer_mask(S).to(device)
-    # if S == 1 and B != 1:
-    #   print(f" ---- {adjacency_matrices} ->\n{in_seq}\n{out_seq}\n{self.transformer(in_seq, out_seq, tgt_mask=mask)[:,-1,:]}\n")
     return self.transformer(in_seq, out_seq, tgt_mask=mask)[:,-1,:]
   
 

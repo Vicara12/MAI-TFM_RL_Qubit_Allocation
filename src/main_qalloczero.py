@@ -32,7 +32,6 @@ def testing_pred_model():
     n_cores=2,
     core_connectivity=core_connectivity,
     number_emb_size=4,
-    glimpse_size=8,
     n_heads=4,
   )
   pred_model.eval()
@@ -42,14 +41,14 @@ def testing_pred_model():
     [2, 1],
   ])
   prev_core_allocs = torch.tensor([
-    [ 0, 1, 1, 1],
-    [ 1, 0, 1, 0],
-    [-1,-1,-1,-1],
+    [0,1,1,1],
+    [1,0,1,0],
+    [2,2,2,2],
   ])
   current_core_allocs = torch.tensor([
-    [ 0,-1, 1,-1],
-    [ 0,-1, 0,-1],
-    [-1,-1,-1,-1],
+    [0,2,1,2],
+    [0,2,0,2],
+    [2,2,2,2],
   ])
   core_capacities = torch.tensor([
     [ 1, 1],
@@ -71,18 +70,8 @@ def testing_pred_model():
      [0,0,0,1],
      [0,0,1,0]],
   ])
-  ts_engine = TSCppEngine()
-  ts_engine.load_model(pred_model)
-  probs_cpp, vals_cpp = ts_engine.test_forward(
-    qubits,
-    prev_core_allocs,
-    current_core_allocs,
-    core_capacities,
-    circuit_emb,
-    slice_adj_mat,
-  )
   
-  probs_py, vals_py = pred_model(
+  probs_batched, vals_batched = pred_model(
     qubits=qubits,
     prev_core_allocs=prev_core_allocs,
     current_core_allocs=current_core_allocs,
@@ -90,9 +79,25 @@ def testing_pred_model():
     circuit_emb=circuit_emb,
     slice_adj_mat=slice_adj_mat,
   )
-  
-  print(torch.equal(probs_py, probs_cpp))
-  print(torch.equal(vals_py, vals_cpp))
+
+  probs_single = []
+  vals_single = []
+  for i in range(len(slice_adj_mat)):
+    p,v = pred_model(
+      qubits=qubits[i].unsqueeze(0),
+      prev_core_allocs=prev_core_allocs[i].unsqueeze(0),
+      current_core_allocs=current_core_allocs[i].unsqueeze(0),
+      core_capacities=core_capacities[i].unsqueeze(0),
+      circuit_emb=circuit_emb[i].unsqueeze(0),
+      slice_adj_mat=slice_adj_mat[i].unsqueeze(0),
+    )
+    probs_single.append(p)
+    vals_single.append(v)
+  probs_single = torch.vstack(probs_single)
+  vals_single = torch.vstack(vals_single)
+
+  print(torch.equal(probs_batched, probs_single))
+  print(torch.equal(vals_batched, vals_single))
 
 
 def test_cpp_engine():
@@ -107,7 +112,6 @@ def test_cpp_engine():
     n_cores=core_connectivity.shape[0],
     core_connectivity=core_connectivity,
     number_emb_size=8,
-    glimpse_size=64,
     n_heads=4,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
@@ -127,7 +131,7 @@ def test_cpp_engine():
   py_engine = TSPythonEngine(n_qubits, core_caps, core_connectivity, verbose=True)
   cpp_engine.load_model("pred_model", pred_model)
   py_engine.load_model("pred_model", pred_model)
-  cfg = TSConfig()
+  cfg = TSConfig(target_tree_size=1024)
   train_data = False
   torch.manual_seed(42)
   print("Starting C++ optimization:")

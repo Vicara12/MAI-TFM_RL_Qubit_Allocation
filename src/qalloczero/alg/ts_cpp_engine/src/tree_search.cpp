@@ -295,7 +295,7 @@ auto TreeSearch::new_policy_and_val(
   pol = (1 - cfg_.noise)*pol + cfg_.noise*dir_noise;
 
   // Set probability of allocation of cores without enough space to zero and normalize
-  int n_qubits = (qubits[1].item<int>() == -1 ? 1 : 2);
+  int n_qubits = (q1 == -1 ? 1 : 2);
   auto valid_moves_mask = core_caps >= n_qubits;
   pol.index_put_({~valid_moves_mask}, at::tensor(0.f));
   at::Tensor prob_sum = pol.sum(-1).unsqueeze(1);
@@ -307,8 +307,8 @@ auto TreeSearch::new_policy_and_val(
 
 auto TreeSearch::build_root() -> std::shared_ptr<Node> {
   auto root = std::make_shared<Node>();
-  root->current_allocs = -1*at::ones({n_qubits_}, torch::kLong).to(device_);
-  root->prev_allocs    = -1*at::ones({n_qubits_}, torch::kLong).to(device_);
+  root->current_allocs = n_cores_*at::ones({n_qubits_}, torch::kLong).to(device_);
+  root->prev_allocs    = n_cores_*at::ones({n_qubits_}, torch::kLong).to(device_);
   root->core_caps = core_caps_;
   root->alloc_step = 0;
   root->slice_idx  = 0;
@@ -360,7 +360,7 @@ auto TreeSearch::expand_node(std::shared_ptr<Node> node) -> void {
     child->alloc_step = node->alloc_step + 1;
     child->slice_idx = slice_idx_children;
     if (child->slice_idx != node->slice_idx) {
-      child->current_allocs = -1 * at::ones_like(*node->current_allocs).to(device_);
+      child->current_allocs = n_cores_ * at::ones_like(*node->current_allocs).to(device_);
       child->prev_allocs = node->current_allocs->clone();
       (*child->prev_allocs)[qubit0] = action;
       if (qubit1 != -1)
