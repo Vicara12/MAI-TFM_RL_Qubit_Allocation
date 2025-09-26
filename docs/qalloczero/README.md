@@ -30,6 +30,19 @@ your OS and needs (remember to also install the C/C++ VSCode extension)
 }
 ```
 
+To get profiling information call `TSCppEngine` with the profile argument to true and run the
+following command
+```bash
+pprof --pdf src/qalloczero/alg/ts_cpp_engine/build/ts_cpp_engine.so profile.prof > report.pdf
+```
+You might need to install perftools, go language and pprof 
+```bash
+sudo apt install libgoogle-perftools-dev
+sudo apt  install golang-go
+go install github.com/google/pprof@latest
+mv ~/go/bin/pprof /usr/bin/
+```
+
 NOTE: If your system does not have cuda installed (this might be the case if you
 have an integrated graphics card), uninstall cuda
 ```bash

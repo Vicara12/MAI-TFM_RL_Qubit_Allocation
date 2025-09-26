@@ -13,6 +13,11 @@ find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 #     -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
 find_package(Torch REQUIRED)
 
+# For profiling. Install profiling library with sudo apt install libgoogle-perftools-dev
+find_package(Threads REQUIRED)
+find_library(GPERFTOOLS_PROFILER profiler)
+
+
 # Where are the torch shared libs (libtorch.so, libtorch_python.so, ...)? Use the venv’s torch/lib.
 execute_process(
   COMMAND "${Python3_EXECUTABLE}" -c
@@ -44,6 +49,7 @@ target_link_libraries(ts_cpp_engine PRIVATE
   ${TORCH_LIBRARIES}
   torch_python
   Python3::Python
+  ${GPERFTOOLS_PROFILER} Threads::Threads # For profiling
 )
 
 # Ensure the loader finds the torch libs at import time (embed the rpath)
