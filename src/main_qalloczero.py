@@ -119,48 +119,35 @@ def test_cpp_engine():
   print(f"{circuit.slice_gates = }")
   encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
   encoder.eval()
-  embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
-  cpp_engine = TSCppEngine(
-    n_qubits,
-    core_caps,
-    core_connectivity,
+  params = dict(
+    n_qubits=n_qubits,
+    core_caps=core_caps,
+    core_conns=core_connectivity,
     verbose=False,
     device="cpu",
   )
-  py_engine = TSPythonEngine(
-    n_qubits,
-    core_caps,
-    core_connectivity,
-    verbose=False,
-    device="cpu",
-  )
+  cpp_engine = TSCppEngine(**params)
+  py_engine = TSPythonEngine(**params)
   cpp_engine.load_model("pred_model", pred_model)
   py_engine.load_model("pred_model", pred_model)
-  cfg = TSConfig(target_tree_size=1024)
-  train_data = False
+  opt_params = dict(
+    slice_adjm=circuit.adj_matrices,
+    circuit_embs=encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0),
+    alloc_steps=circuit.alloc_steps,
+    cfg=TSConfig(target_tree_size=1024),
+    ret_train_data=True
+  )
   torch.manual_seed(42)
   print("Starting C++ optimization:")
   with Timer.get('t1'):
-    res_cpp = cpp_engine.optimize(
-      slice_adjm=circuit.adj_matrices,
-      circuit_embs=embs,
-      alloc_steps=circuit.alloc_steps,
-      cfg=cfg,
-      ret_train_data=train_data
-    )
+    res_cpp = cpp_engine.optimize(**opt_params)
   cost = solutionCost(res_cpp[0], core_connectivity)
   print(f"t={Timer.get('t1').time:.2f}s cost={cost}")
   # print(f"t={Timer.get('t1').time:.2f}s cost={cost} {res_cpp = }")
   torch.manual_seed(42)
   print("Starting Python optimization:")
   with Timer.get('t2'):
-    res_py = py_engine.optimize(
-      slice_adjm=circuit.adj_matrices,
-      circuit_embs=embs,
-      alloc_steps=circuit.alloc_steps,
-      cfg=cfg,
-      ret_train_data=train_data
-    )
+    res_py = py_engine.optimize(**opt_params)
   cost = solutionCost(res_py[0], core_connectivity)
   print(f"t={Timer.get('t2').time:.2f}s cost={cost}")
   # print(f"t={Timer.get('t2').time:.2f}s cost={cost} {res_py = }")
@@ -168,9 +155,9 @@ def test_cpp_engine():
 
 def finetune():
   torch.manual_seed(42)
-  n_qubits = 16
-  n_slices = 4
-  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
+  n_qubits = 64
+  n_slices = 32
+  core_caps = torch.tensor([8]*8, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_connectivity = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   pred_model = PredictionModel(
@@ -190,25 +177,31 @@ def finetune():
     n_qubits,
     core_caps,
     core_connectivity,
-    verbose=True,
+    verbose=False,
     device="cuda",
-    profile=True
   )
   cpp_engine.load_model("pred_model", pred_model)
   train_data = False
-  for n_exp in [8, 16, 32, 64, 128, 256, 512, 1024]:
+  times = []
+  costs = []
+  timer = Timer.get('t')
+  for tts in [8, 16, 32, 64, 128, 256, 512, 1024]:
     torch.manual_seed(42)
-    print("Starting Python optimization:")
-    with Timer.get('t2'):
+    print(f"Optimizing with tts {tts}")
+    with timer:
       res_py = cpp_engine.optimize(
         slice_adjm=circuit.adj_matrices,
         circuit_embs=embs,
         alloc_steps=circuit.alloc_steps,
-        cfg=TSConfig(target_tree_size=n_exp),
+        cfg=TSConfig(target_tree_size=tts),
         ret_train_data=train_data
       )
-    cost = solutionCost(res_py[0], core_connectivity)
-    print(f"t={Timer.get('t2').time:.2f}s cost={cost}")
+    costs.append(solutionCost(res_py[0], core_connectivity))
+    times.append(timer.time)
+    timer.reset()
+  print(f"{times = }")
+  print(f"{costs = }")
+  return times, costs
 
 
 
@@ -216,5 +209,15 @@ if __name__ == "__main__":
   # main()
   # testing_circuit_enc()
   # testing_pred_model()
-  test_cpp_engine()
-  # finetune()
+  # test_cpp_engine()
+  all_times = []
+  all_costs = []
+  try:
+    for i in range(100):
+      t, c = finetune()
+      all_times.append(t)
+      all_costs.append(c)
+  except KeyboardInterrupt:
+    pass
+  print(f"{all_times = }")
+  print(f"{all_costs = }")
