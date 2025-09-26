@@ -19,9 +19,7 @@ class TSCppEngine:
     core_cons: torch.Tensor,
     verbose: bool = False,
     device: str = "cpu",
-    profile: bool = False
   ):
-    self.profile = profile
     self.cpp_engine = TSCppEngineInterface(
       n_qubits, core_caps, core_cons, verbose, device)
   
@@ -55,7 +53,6 @@ class TSCppEngine:
       alloc_steps,
       TSCppEngine._convert_cfg(cfg),
       ret_train_data,
-      self.profile
     )
     return allocs, n_exp_nodes, expl_r, TSCppEngine._convert_train_data(tdata)
   

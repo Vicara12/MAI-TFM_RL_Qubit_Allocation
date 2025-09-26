@@ -112,10 +112,7 @@ TreeSearch::TreeSearch(
   , n_cores_(core_conns.size(0))
   , verbose_(verbose)
   , device_(device)
-{
-  if (verbose_)
-    std::cout << "[*] Optimizing using C++ engine and device " << device_ << std::endl;
-}
+{}
 
 
 auto TreeSearch::optimize(

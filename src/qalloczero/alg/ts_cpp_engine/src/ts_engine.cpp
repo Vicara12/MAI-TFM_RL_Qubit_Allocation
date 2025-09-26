@@ -3,7 +3,6 @@
 #include <torch/torch.h>
 #include <vector>
 #include <optional>
-#include <gperftools/profiler.h>
 #include "tree_search.hpp"
 #include "inference_server.hpp"
 
@@ -53,11 +52,8 @@ public:
         const at::Tensor& circuit_embs,
         const at::Tensor& alloc_steps,
         TreeSearch::OptConfig cfg,
-        bool ret_train_data,
-        bool profile
+        bool ret_train_data
     ) -> std::tuple<at::Tensor, int, float, std::optional<TreeSearch::TrainData>> {
-        if (profile)
-            ProfilerStart("profile.prof");
         return ts_.optimize(
             slice_adjm,
             circuit_embs,
@@ -65,8 +61,6 @@ public:
             cfg,
             ret_train_data
         );
-        if (profile)
-            ProfilerStop();
     }
 };
 

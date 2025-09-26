@@ -1,5 +1,5 @@
 from typing import List, Self, Tuple, Dict, Optional
-from math import sqrt, log
+from math import sqrt, log, isnan
 from dataclasses import dataclass
 import torch
 from qalloczero.models.inferenceserver import InferenceServer
@@ -33,7 +33,7 @@ class TSPythonEngine(TSEngine):
 
     @property
     def value(self) -> float:
-      return self.value_sum/self.visit_count if not self.terminal else 0
+      return 0 if (self.terminal or not self.visit_count) else self.value_sum/self.visit_count
 
 
 
@@ -43,15 +43,18 @@ class TSPythonEngine(TSEngine):
     core_caps: torch.Tensor,
     core_conns: torch.Tensor,
     verbose: bool = False,
+    device: str = "cpu"
   ):
     self.n_qubits = n_qubits
-    self.core_caps = core_caps
+    self.core_caps = core_caps.to(device)
     self.core_conns = core_conns
     self.n_cores = core_conns.shape[0]
     self.verbose = verbose
+    self.device = device
     
 
   def load_model(self, name: str, model: torch.nn.Module):
+    model.to(self.device)
     return InferenceServer.addModel(name, model)
   
 
@@ -130,9 +133,9 @@ class TSPythonEngine(TSEngine):
     tdata.qubits[step,0] = qubit0
     tdata.qubits[step,1] = qubit1
     tdata.slice_idx[step,0] = slice_idx
-    tdata.prev_allocs[step] = self.root.prev_allocs
-    tdata.curr_allocs[step] = self.root.current_allocs
-    tdata.core_caps[step] = self.root.core_caps
+    tdata.prev_allocs[step] = self.root.prev_allocs.cpu()
+    tdata.curr_allocs[step] = self.root.current_allocs.cpu()
+    tdata.core_caps[step] = self.root.core_caps.cpu()
 
 
   def _init_opt(
@@ -143,8 +146,8 @@ class TSPythonEngine(TSEngine):
     cfg: TSConfig,
     ret_train_data: bool
   ) -> Tuple[torch.Tensor, TSTrainData]:
-    self.slice_adjm = slice_adjm
-    self.circuit_embs = circuit_embs
+    self.slice_adjm = slice_adjm.to(self.device)
+    self.circuit_embs = circuit_embs.to(self.device)
     self.alloc_steps = alloc_steps
     self.cfg = cfg
     self.n_slices = slice_adjm.shape[0]
@@ -179,14 +182,14 @@ class TSPythonEngine(TSEngine):
       self.__backprop(search_path)
     action, logits = self.__selectAction(self.root, self.cfg.action_sel_temp)
     action_cost = self.root.children[action][1]
-    self.root = self.root.children[action]
+    self.root = self.root.children[action][0]
     return action, action_cost, logits, num_sims
 
 
   @staticmethod
   def __selectAction(node: Node, temp: float) -> Tuple[int, torch.Tensor]:
     visit_counts = list(
-      node.children[child_i][0].visit_count if child_i in node.children else 0
+      node.children[child_i][0].visit_count if child_i in node.children.keys() else 0
         for child_i in range(len(node.core_caps))
     )
     visit_counts = torch.tensor(visit_counts, dtype=torch.float)/sum(visit_counts)
@@ -205,7 +208,7 @@ class TSPythonEngine(TSEngine):
     pol, v_norm = InferenceServer.inference(
       model_name="pred_model",
       unpack=True,
-      qubits=self.circuit.alloc_steps[node.allocation_step][(1,2)],
+      qubits=self.alloc_steps[node.allocation_step][(1,2),].to(self.device),
       prev_core_allocs=node.prev_allocs,
       current_core_allocs=node.current_allocs,
       core_capacities=node.core_caps,
@@ -213,7 +216,7 @@ class TSPythonEngine(TSEngine):
       slice_adj_mat=self.slice_adjm[node.current_slice],
     )
     # Convert normalized value to raw value
-    remaining_gates = self.circuit.alloc_steps[node.allocation_step][2]
+    remaining_gates = self.alloc_steps[node.allocation_step,3]
     v = v_norm*(remaining_gates+1)
     # Add exploration noise to the priors
     dir_noise = torch.distributions.Dirichlet(self.cfg.dirichlet_alpha * torch.ones_like(pol)).sample()
@@ -222,7 +225,7 @@ class TSPythonEngine(TSEngine):
     n_qubits = 1 if self.alloc_steps[node.allocation_step,2].item() == -1 else 2
     valid_cores = (node.core_caps >= n_qubits)
     pol[~valid_cores] = 0
-    sum_pol = sum_pol
+    sum_pol = sum(pol)
     if sum_pol < 1e-5:
       pol = torch.zeros_like(pol)
       n_valid_cores = sum(valid_cores)
@@ -234,8 +237,8 @@ class TSPythonEngine(TSEngine):
 
   def __buildRoot(self) -> Node:
     root = TSPythonEngine.Node(
-      current_allocs = self.n_cores*torch.ones(size=(self.circuit.n_qubits,), dtype=int),
-      prev_allocs = None,
+      current_allocs = self.n_cores*torch.ones(size=(self.n_qubits,), dtype=int, device=self.device),
+      prev_allocs = self.n_cores*torch.ones(size=(self.n_qubits,), dtype=int, device=self.device),
       core_caps = self.core_caps,
       allocation_step = 0,
       current_slice = 0,
@@ -278,12 +281,12 @@ class TSPythonEngine(TSEngine):
         child.core_caps = self.core_caps
       else:
         child.current_allocs = node.current_allocs.clone()
-        child.prev_allocs[qubit0,] = action
+        child.current_allocs[qubit0,] = action
         if qubit1 != -1:
-          child.prev_allocs[qubit1,] = action
+          child.current_allocs[qubit1,] = action
         child.prev_allocs = node.prev_allocs
         child.core_caps = node.core_caps.clone()
-        child.core_caps[action] -= len(1 if qubit1 == -1 else 0)
+        child.core_caps[action] -= 1 if qubit1 == -1 else 2
         assert child.core_caps[action] >= 0, 'Not enough space in core to expand'
       child.policy, child.value_sum = self.__getNewPolicyAndValue(child)
   
@@ -294,7 +297,7 @@ class TSPythonEngine(TSEngine):
     qubit0 = self.alloc_steps[node.allocation_step][1].item()
     qubit1 = self.alloc_steps[node.allocation_step][2].item()
     qubits = (qubit0,) if qubit1 == -1 else (qubit0, qubit1)
-    prev_cores = node.prev_allocs[qubits,]
+    prev_cores = node.prev_allocs[qubits,].cpu()
     costs = self.core_conns[action, prev_cores]
     return torch.sum(costs).item()
 
@@ -303,7 +306,7 @@ class TSPythonEngine(TSEngine):
     search_path[-1][0].visit_count += 1
     # Reverse list order and pair items. For example [0,1,2,3] -> ((2,3), (1,2), (0,1))
     for node, next_node in zip(search_path[-2::-1], search_path[:0:-1]):
-      node[0].value_sum += next_node[0].value + node[0].children[node[1]]
+      node[0].value_sum += next_node[0].value + node[0].children[next_node[1]][1]
       node[0].visit_count += 1
   
   
@@ -318,5 +321,6 @@ class TSPythonEngine(TSEngine):
 
   
   def __selectChild(self, current_node: Node) -> Tuple[Node, int]:
+    ucbs = list((self.__UCB(current_node, a).item(), a) for a in current_node.children.keys())
     (_, action) = min((self.__UCB(current_node, a), a) for a in current_node.children.keys())
-    return current_node.children[action], action
+    return current_node.children[action][0], action
