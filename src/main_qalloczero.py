@@ -116,7 +116,7 @@ def test_cpp_engine():
   encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
   encoder.eval()
   embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
-  cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity, verbose=True)
+  cpp_engine = TSCppEngine(n_qubits, core_caps, core_connectivity, verbose=True, device="cuda")
   py_engine = TSPythonEngine(n_qubits, core_caps, core_connectivity, verbose=True)
   cpp_engine.load_model("pred_model", pred_model)
   py_engine.load_model("pred_model", pred_model)

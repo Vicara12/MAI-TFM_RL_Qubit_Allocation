@@ -15,7 +15,11 @@ class InferenceServer
 
 public:
 
-  static auto add_model(std::string name, const std::string& path_to_pth) -> void;
+  static auto add_model(
+    std::string name,
+    const std::string& path_to_pth,
+    at::Device device
+  ) -> void;
 
   static auto has_model(const std::string& name) -> bool;
 

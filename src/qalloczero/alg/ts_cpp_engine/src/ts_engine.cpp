@@ -9,19 +9,34 @@
 
 class TSEngine {
     TreeSearch ts_;
+    at::Device device_;
+
+    at::Device device_from_string(const std::string& dev_str) {
+        if (dev_str == "cpu") {
+            return at::Device(torch::kCPU);
+        } else if (dev_str == "cuda" || dev_str == "cuda:0") {
+            return at::Device(torch::kCUDA, 0);  // default GPU 0
+        } else if (dev_str.rfind("cuda:", 0) == 0) {  // starts with "cuda:"
+            int idx = std::stoi(dev_str.substr(5));
+            return at::Device(torch::kCUDA, idx);
+        } else {
+            throw std::runtime_error("Unknown device string: " + dev_str);
+        }
+    }
+
 public:
     TSEngine(
         int n_qubits,
         const at::Tensor& core_caps,
         const at::Tensor& core_conns,
         bool verbose,
-        std::string device
-    )
-    : ts_(n_qubits, core_caps, core_conns, verbose, device)
+        const std::string &device)
+    : device_(device_from_string(device))
+    , ts_(n_qubits, core_caps, core_conns, verbose, device_from_string(device))
     {}
 
     auto load_model(const std::string &name, const std::string &path) -> void {
-        InferenceServer::add_model(name, path);
+        InferenceServer::add_model(name, path, device_);
     }
 
     auto has_model(const std::string &name) -> bool {
@@ -74,7 +89,7 @@ PYBIND11_MODULE(ts_cpp_engine, m) {
         .def_readwrite("value",       &TreeSearch::TrainData::value);
     
     pybind11::class_<TSEngine>(m, "TSEngine")
-        .def(py::init<int, const at::Tensor&, const at::Tensor&, bool, std::string>())
+        .def(py::init<int, const at::Tensor&, const at::Tensor&, bool, const std::string&>())
         .def("load_model", &TSEngine::load_model)
         .def("has_model", &TSEngine::has_model)
         .def("rm_model", &TSEngine::rm_model)

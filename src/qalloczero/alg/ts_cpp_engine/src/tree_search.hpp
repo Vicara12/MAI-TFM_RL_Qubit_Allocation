@@ -36,7 +36,7 @@ public:
     const at::Tensor& core_capacities,
     const at::Tensor& core_conns,
     bool verbose,
-    std::string device_
+    at::Device device_
   );
 
   /**
@@ -64,7 +64,7 @@ private:
 
   struct Node;
   bool verbose_;
-  std::string device_;
+  at::Device device_;
   int n_qubits_;
   int n_cores_;
   int n_steps_;

@@ -104,16 +104,17 @@ TreeSearch::TreeSearch(
   const at::Tensor& core_capacities,
   const at::Tensor& core_conns,
   bool verbose,
-  std::string device
+  at::Device device
 )
   : n_qubits_(n_qubits)
-  , core_caps_(core_capacities)
+  , core_caps_(core_capacities.to(device_))
   , core_conns_(core_conns)
   , n_cores_(core_conns.size(0))
   , verbose_(verbose)
   , device_(device)
 {
-  core_caps_.to(device_);
+  if (verbose_)
+    std::cout << "[*] Optimizing using C++ engine and device " << device_ << std::endl;
 }
 
 
@@ -185,9 +186,9 @@ auto TreeSearch::store_train_data(
   tdata.qubits[alloc_step][0] = q0;
   tdata.qubits[alloc_step][1] = q1;
   tdata.slice_idx[alloc_step][0] = slice_idx;
-  tdata.prev_allocs.index_put_({alloc_step}, *root_->prev_allocs);
-  tdata.curr_allocs.index_put_({alloc_step}, *root_->current_allocs);
-  tdata.core_caps.index_put_({alloc_step}, *root_->core_caps);
+  tdata.prev_allocs.index_put_({alloc_step}, root_->prev_allocs->cpu());
+  tdata.curr_allocs.index_put_({alloc_step}, root_->current_allocs->cpu());
+  tdata.core_caps.index_put_({alloc_step}, root_->core_caps->cpu());
 }
 
 
@@ -197,12 +198,10 @@ auto TreeSearch::initialize_search(
   const at::Tensor& alloc_steps,
   const OptConfig &cfg
 ) -> at::Tensor {
-  slice_adjm_ = slice_adjm;
-  circuit_embs_ = circuit_embs;
+  slice_adjm_ = slice_adjm.to(device_);
+  circuit_embs_ = circuit_embs.to(device_);
   alloc_steps_ = alloc_steps;
   cfg_ = cfg;
-  slice_adjm_.to(device_);
-  circuit_embs_.to(device_);
   int n_slices = slice_adjm_.size(0);
   n_steps_ = alloc_steps.size(0);
   root_ = build_root();
@@ -322,7 +321,7 @@ auto TreeSearch::build_root() -> std::shared_ptr<Node> {
     root->current_allocs->unsqueeze(0),
     root->core_caps->unsqueeze(0)
   );
-  root->policy = pol[0];
+  root->policy = pol[0].cpu();
   root->value_sum = val[0].item<float>();
   return root;
 }

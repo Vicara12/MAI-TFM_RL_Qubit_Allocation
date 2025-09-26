@@ -40,7 +40,7 @@ class PredictionModel(torch.nn.Module):
     self.n_cores = n_cores
     self.n_emb_size = number_emb_size
     self.glimpse_size = glimpse_size
-    self.core_connectivity = core_connectivity
+    self.register_buffer("core_connectivity", core_connectivity)
 
     # Used to convert numbers to vector embeddings. We use this instead of proper embeddings in
     # order to make it more flexible (no fixed number of bins)
