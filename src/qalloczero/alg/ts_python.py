@@ -1,8 +1,7 @@
 from typing import List, Self, Tuple, Dict, Optional
-from math import sqrt, log, isnan
+from math import sqrt, log
 from dataclasses import dataclass
 import torch
-from qalloczero.models.inferenceserver import InferenceServer
 from qalloczero.alg.ts import TSEngine, TSConfig, TSTrainData
 
 
@@ -46,19 +45,20 @@ class TSPythonEngine(TSEngine):
     self.n_qubits = n_qubits
     self.n_cores = n_cores
     self.device = device
+    self.pred_model = None
     
 
-  def load_model(self, name: str, model: torch.nn.Module):
-    model.to(self.device)
-    return InferenceServer.addModel(name, model)
+  def load_model(self, model: torch.nn.Module):
+    self.pred_model = model
+    self.pred_model.to(self.device)
   
 
   def has_model(self, name: str):
-    return InferenceServer.hasModel(name)
+    return self.pred_model is not None
   
 
-  def rm_model(self, name: str):
-    return InferenceServer.removeModel(name)
+  def replace_model(self, model: torch.nn.Module):
+    self.pred_model = model
   
 
   def optimize(
@@ -207,9 +207,7 @@ class TSPythonEngine(TSEngine):
   def __getNewPolicyAndValue(self, node: Node) -> Tuple[torch.Tensor, torch.Tensor]:
     if node.terminal:
       return None, 0
-    pol, v_norm = InferenceServer.inference(
-      model_name="pred_model",
-      unpack=False,
+    pol, v_norm = self.pred_model(
       qubits=self.alloc_steps[node.allocation_step][(1,2),].to(self.device).unsqueeze(0),
       prev_core_allocs=node.prev_allocs.unsqueeze(0),
       current_core_allocs=node.current_allocs.unsqueeze(0),

@@ -128,8 +128,8 @@ def test_cpp_engine():
   )
   cpp_engine = TSCppEngine(**params)
   py_engine = TSPythonEngine(**params)
-  cpp_engine.load_model("pred_model", pred_model)
-  py_engine.load_model("pred_model", pred_model)
+  cpp_engine.load_model(pred_model)
+  py_engine.load_model(pred_model)
   opt_params = dict(
     core_conns=core_connectivity,
     core_caps=core_caps,
@@ -181,7 +181,7 @@ def finetune():
     n_cores,
     device="cuda",
   )
-  cpp_engine.load_model("pred_model", pred_model)
+  cpp_engine.load_model(pred_model)
   times = []
   costs = []
   timer = Timer.get('t')
@@ -244,12 +244,12 @@ def test_alphazero():
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
   
   if test_train:
@@ -266,7 +266,6 @@ def test_alphazero():
 
 
 if __name__ == "__main__":
-  # main()
   # testing_circuit_enc()
   # testing_pred_model()
   # test_cpp_engine()

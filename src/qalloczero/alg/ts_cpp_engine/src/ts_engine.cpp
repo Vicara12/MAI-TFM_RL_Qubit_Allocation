@@ -33,16 +33,16 @@ public:
     , ts_(n_qubits, n_cores, device_from_string(device))
     {}
 
-    auto load_model(const std::string &name, const std::string &path) -> void {
-        InferenceServer::add_model(name, path, device_);
+    auto load_model(const std::string &path) -> void {
+        ts_.get_is().add_model(path, device_);
     }
 
-    auto has_model(const std::string &name) -> bool {
-        return InferenceServer::has_model(name);
+    auto has_model() -> bool {
+        return ts_.get_is().has_model();
     }
 
-    auto rm_model(const std::string &name) -> void {
-        return InferenceServer::rm_model(name);
+    auto rm_model() -> void {
+        ts_.get_is().rm_model();
     }
 
     auto optimize(

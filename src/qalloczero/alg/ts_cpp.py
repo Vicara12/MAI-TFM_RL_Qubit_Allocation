@@ -21,21 +21,23 @@ class TSCppEngine:
     self.cpp_engine = TSCppEngineInterface(
       n_qubits, n_cores, device)
   
-  def load_model(self, name: str, model: torch.nn.Module):
+  def load_model(self, model: torch.nn.Module):
     scripted_model = torch.jit.script(model)
     # Make model names unique to prevent clashes if run in parallel
     file_name = f"/tmp/model_{str(time()).replace('.','')}.pt"
     scripted_model.save(file_name)
     try:
-      self.cpp_engine.load_model(name, file_name)
+      self.cpp_engine.load_model(file_name)
     finally:
       remove(file_name)
   
-  def has_model(self, name: str) -> bool:
-    return self.cpp_engine.has_model(name)
+  def has_model(self) -> bool:
+    return self.cpp_engine.has_model()
   
-  def rm_model(self, name: str):
-    return self.cpp_engine.rm_model(name)
+  def replace_model(self, model: torch.nn.Module):
+    if self.has_model():
+      self.cpp_engine.rm_model()
+    self.load_model(model=model)
   
   def optimize(
     self,

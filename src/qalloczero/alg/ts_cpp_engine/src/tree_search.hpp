@@ -2,6 +2,7 @@
 #include <torch/extension.h>
 #include <vector>
 #include <memory>
+#include "inference_server.hpp"
 
 
 
@@ -60,11 +61,14 @@ public:
     bool verbose
   ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
 
+  auto get_is() -> InferenceServer&;
+
   
 private:
 
   struct Node;
   at::Device device_;
+  InferenceServer is_;
   int n_qubits_;
   int n_cores_;
   int n_steps_;

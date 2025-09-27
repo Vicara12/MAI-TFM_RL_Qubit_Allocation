@@ -66,7 +66,7 @@ class AlphaZero:
       number_emb_size=model_cfg.pm_nemb_sz,
       n_heads=model_cfg.ce_nheads,
     )
-    self.backend.load_model('pred_model', self.pred_model)
+    self.backend.load_model(self.pred_model)
     self.pred_model.to(device)
 
 
@@ -96,12 +96,21 @@ class AlphaZero:
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
     loaded = AlphaZero(hardware=hardware, device=device, backend=backend)
-    loaded.circ_enc = torch.load(os.path.join(path, "circ_enc.pt"), weights_only=False)
-    loaded.pred_model = torch.load(os.path.join(path, "pred_mod.pt"), weights_only=False)
-    loaded.backend.rm_model('pred_model')
-    loaded.backend.load_model('pred_model', loaded.pred_model)
-    loaded.circ_enc.to(device)
-    loaded.pred_model.to(device)
+    loaded.circ_enc.load_state_dict(
+      torch.load(
+        os.path.join(path, "circ_enc.pt"),
+        weights_only=False,
+        map_location=device,
+      )
+    )
+    loaded.pred_model.load_state_dict(
+      torch.load(
+        os.path.join(path, "pred_mod.pt"),
+        weights_only=False,
+        map_location=device,
+      )
+    )
+    loaded.backend.replace_model(loaded.pred_model)
     return loaded
     
 
@@ -215,8 +224,7 @@ class AlphaZero:
         f" (pol={avg_loss_pol/train_cfg.batch_size:4f}, val={avg_loss_val/train_cfg.batch_size:4f})"
       ))
 
-      self.backend.rm_model("pred_model")
-      self.backend.load_model("pred_model", self.pred_model)
+      self.backend.replace_model(self.pred_model)
       self.iter_timer.stop()
       t_left = self.iter_timer.avg_time*(train_cfg.train_iters - iter - 1)
       print((

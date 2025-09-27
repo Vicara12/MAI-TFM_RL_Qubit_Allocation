@@ -32,19 +32,19 @@ class TSEngine(ABC):
     '''
 
     @abstractmethod
-    def load_model(self, name: str, model: torch.nn.Module):
+    def load_model(self, model: torch.nn.Module):
         raise NotImplementedError(
             f"load_model not implemented for class {self.__class__.__name__}")
     
     @abstractmethod
-    def has_model(self, name: str) -> bool:
+    def has_model(self) -> bool:
         raise NotImplementedError(
             f"has_model not implemented for class {self.__class__.__name__}")
     
     @abstractmethod
-    def rm_model(self, name: str):
+    def replace_model(self, model: torch.nn.Module):
         raise NotImplementedError(
-            f"rm_model not implemented for class {self.__class__.__name__}")
+            f"replace_model not implemented for class {self.__class__.__name__}")
         
     @abstractmethod
     def optimize(

@@ -1,5 +1,4 @@
 #include "tree_search.hpp"
-#include "inference_server.hpp"
 #include <map>
 #include <memory>
 #include <optional>
@@ -108,6 +107,10 @@ TreeSearch::TreeSearch(
   , n_cores_(n_cores)
   , device_(device)
 {}
+
+auto TreeSearch::get_is() -> InferenceServer& {
+  return is_;
+}
 
 
 auto TreeSearch::optimize(
@@ -274,8 +277,7 @@ auto TreeSearch::new_policy_and_val(
   auto qubits = at::tensor({q0, q1}, torch::kInt32).to(device_);
   int batch = curr_allocs.size(0);
 
-  auto model_out = InferenceServer::infer(
-    "pred_model",
+  auto model_out = is_.infer(
     qubits.expand({batch,2}),
     prev_allocs.expand({batch,n_qubits_}),
     curr_allocs,

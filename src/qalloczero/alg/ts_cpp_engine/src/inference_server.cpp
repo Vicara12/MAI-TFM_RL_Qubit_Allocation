@@ -4,32 +4,22 @@
 
 
 
-std::map<std::string, torch::jit::script::Module> InferenceServer::models{};
-
-auto InferenceServer::add_model(
-  std::string name,
-  const std::string& path_to_pth,
-  at::Device device
-) -> void {
+auto InferenceServer::add_model(const std::string& path_to_pth, at::Device device) -> void {
   try {
     auto model_unopt = torch::jit::load(path_to_pth);
     model_unopt.to(device);
     model_unopt.eval();
-    auto model = torch::jit::optimize_for_inference(model_unopt);
-    InferenceServer::models[std::move(name)] = std::move(model);
+    model_ = torch::jit::optimize_for_inference(model_unopt);
   } catch (const std::exception& e) {
     throw std::runtime_error("Failed to load model: " + std::string(e.what()));
   }
 }
 
-auto InferenceServer::rm_model(const std::string& name) -> void {
-  auto elm = InferenceServer::models.find(name);
-  if (elm != InferenceServer::models.end()) {
-    InferenceServer::models.erase(elm);
-  }
+auto InferenceServer::rm_model() -> void {
+  model_ = std::nullopt;
 }
 
 
-auto InferenceServer::has_model(const std::string& name) -> bool {
-  return InferenceServer::models.find(name) != InferenceServer::models.end();
+auto InferenceServer::has_model() -> bool {
+  return model_.has_value();
 }
