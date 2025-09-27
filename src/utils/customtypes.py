@@ -114,5 +114,5 @@ class Hardware:
   
 
   @property
-  def n_physical_qubits(self):
+  def n_qubits(self):
     return sum(self.core_capacities).item()

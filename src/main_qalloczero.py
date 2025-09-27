@@ -4,8 +4,10 @@ from utils.allocutils import solutionCost
 from sampler.randomcircuit import RandomCircuit
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
+from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
-from qalloczero.alg.ts import TSConfig, TSTrainData
+from qalloczero.alg.alphazero import AlphaZero
+from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.ts_cpp import TSCppEngine
 from qalloczero.alg.ts_python import TSPythonEngine
 
@@ -204,12 +206,7 @@ def finetune():
   return times, costs
 
 
-
-if __name__ == "__main__":
-  # main()
-  # testing_circuit_enc()
-  # testing_pred_model()
-  # test_cpp_engine()
+def grid_search():
   all_times = []
   all_costs = []
   try:
@@ -221,3 +218,30 @@ if __name__ == "__main__":
     pass
   print(f"{all_times = }")
   print(f"{all_costs = }")
+
+
+def test_alphazero():
+  torch.manual_seed(42)
+  n_qubits = 16
+  n_slices = 4
+  core_caps = torch.tensor([4]*4, dtype=torch.int)
+  n_cores = core_caps.shape[0]
+  core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
+  hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
+  azero = AlphaZero(hardware, verbose=True, backend=AlphaZero.Backend.Cpp)
+  sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
+  circuit = sampler.sample()
+  with Timer.get('t'):
+    allocs, cost, _, _ = azero.optimize(circuit, TSConfig())
+  print(f"t={Timer.get('t').time:.2f}s c={cost}")
+  drawQubitAllocation(allocs, core_caps, circuit.slice_gates)
+
+
+
+if __name__ == "__main__":
+  # main()
+  # testing_circuit_enc()
+  # testing_pred_model()
+  # test_cpp_engine()
+  # grid_search()
+  test_alphazero()
