@@ -88,45 +88,43 @@ struct TreeSearch::Node {
 };
 
 
-TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores)
-  : qubits(at::empty({n_steps, 2}, at::kInt))
-  , prev_allocs(at::empty({n_steps, n_qubits}, at::kLong))
-  , curr_allocs(at::empty({n_steps, n_qubits}, at::kLong))
-  , core_caps(at::empty({n_steps, n_cores}, at::kLong))
-  , slice_idx(at::empty({n_steps, 1}, at::kLong))
-  , logits(at::empty({n_steps, n_cores}, at::kFloat))
-  , value(at::empty({n_steps, 1}, at::kFloat))
+TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores, at::Device device)
+  : qubits(at::empty({n_steps, 2}, at::TensorOptions().dtype(at::kInt).device(device)))
+  , prev_allocs(at::empty({n_steps, n_qubits}, at::TensorOptions().dtype(at::kLong).device(device)))
+  , curr_allocs(at::empty({n_steps, n_qubits}, at::TensorOptions().dtype(at::kLong).device(device)))
+  , core_caps(at::empty({n_steps, n_cores}, at::TensorOptions().dtype(at::kLong).device(device)))
+  , slice_idx(at::empty({n_steps, 1}, at::TensorOptions().dtype(at::kLong).device(device)))
+  , logits(at::empty({n_steps, n_cores}, at::TensorOptions().dtype(at::kFloat).device(device)))
+  , value(at::empty({n_steps, 1}, at::TensorOptions().dtype(at::kFloat).device(device)))
 {}
 
 
 TreeSearch::TreeSearch(
   int n_qubits,
-  const at::Tensor& core_capacities,
-  const at::Tensor& core_conns,
-  bool verbose,
+  int n_cores,
   at::Device device
 )
   : n_qubits_(n_qubits)
-  , core_caps_(core_capacities.to(device_))
-  , core_conns_(core_conns)
-  , n_cores_(core_conns.size(0))
-  , verbose_(verbose)
+  , n_cores_(n_cores)
   , device_(device)
 {}
 
 
 auto TreeSearch::optimize(
+  const at::Tensor& core_conns,
+  const at::Tensor& core_caps,
   const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg,
-  bool ret_train_data
+  bool ret_train_data,
+  bool verbose
 ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>> {
   at::Tensor allocs = initialize_search(
-    slice_adjm, circuit_embs, alloc_steps, cfg);
+    core_conns, core_caps, slice_adjm, circuit_embs, alloc_steps, cfg);
   std::optional<TrainData> tdata;
   if (ret_train_data)
-    tdata = TrainData(n_steps_, n_qubits_, n_cores_);
+    tdata = TrainData(n_steps_, n_qubits_, n_cores_, device_);
   int n_expanded_nodes = 0;
 
   for (size_t step = 0; step < n_steps_; step++) {
@@ -134,7 +132,7 @@ auto TreeSearch::optimize(
     int qubit0 = alloc_steps_[root_->alloc_step][1].item<int>();
     int qubit1 = alloc_steps_[root_->alloc_step][2].item<int>();
 
-    if (verbose_)
+    if (verbose)
       std::cout << " - Optimization step " << (step+1) << "/" << n_steps_ << std::endl;
 
     if (ret_train_data)
@@ -183,18 +181,22 @@ auto TreeSearch::store_train_data(
   tdata.qubits[alloc_step][0] = q0;
   tdata.qubits[alloc_step][1] = q1;
   tdata.slice_idx[alloc_step][0] = slice_idx;
-  tdata.prev_allocs.index_put_({alloc_step}, root_->prev_allocs->cpu());
-  tdata.curr_allocs.index_put_({alloc_step}, root_->current_allocs->cpu());
-  tdata.core_caps.index_put_({alloc_step}, root_->core_caps->cpu());
+  tdata.prev_allocs.index_put_({alloc_step}, *root_->prev_allocs);
+  tdata.curr_allocs.index_put_({alloc_step}, *root_->current_allocs);
+  tdata.core_caps.index_put_({alloc_step}, *root_->core_caps);
 }
 
 
 auto TreeSearch::initialize_search(
+  const at::Tensor& core_conns,
+  const at::Tensor& core_caps,
   const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg
 ) -> at::Tensor {
+  core_conns_ = core_conns.to(device_);
+  core_caps_ = core_caps.to(device_);
   slice_adjm_ = slice_adjm.to(device_);
   circuit_embs_ = circuit_embs.to(device_);
   alloc_steps_ = alloc_steps;
@@ -278,6 +280,7 @@ auto TreeSearch::new_policy_and_val(
     prev_allocs.expand({batch,n_qubits_}),
     curr_allocs,
     core_caps,
+    core_conns_,
     this->circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_}),
     this->slice_adjm_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_})
   );

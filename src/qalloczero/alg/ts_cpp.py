@@ -15,13 +15,11 @@ class TSCppEngine:
   def __init__(
     self,
     n_qubits: int,
-    core_caps: torch.Tensor,
-    core_conns: torch.Tensor,
-    verbose: bool = False,
+    n_cores: int,
     device: str = "cpu",
   ):
     self.cpp_engine = TSCppEngineInterface(
-      n_qubits, core_caps, core_conns, verbose, device)
+      n_qubits, n_cores, device)
   
   def load_model(self, name: str, model: torch.nn.Module):
     scripted_model = torch.jit.script(model)
@@ -40,19 +38,25 @@ class TSCppEngine:
     return self.cpp_engine.rm_model(name)
   
   def optimize(
-      self,
-      slice_adjm: torch.Tensor,
-      circuit_embs: torch.Tensor,
-      alloc_steps: torch.Tensor,
-      cfg: TSConfig,
-      ret_train_data: bool
+    self,
+    core_conns: torch.Tensor,
+    core_caps: torch.Tensor,
+    slice_adjm: torch.Tensor,
+    circuit_embs: torch.Tensor,
+    alloc_steps: torch.Tensor,
+    cfg: TSConfig,
+    ret_train_data: bool,
+    verbose: bool,
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
     allocs, n_exp_nodes, expl_r, tdata = self.cpp_engine.optimize(
+      core_conns,
+      core_caps,
       slice_adjm,
       circuit_embs,
       alloc_steps,
       TSCppEngine._convert_cfg(cfg),
       ret_train_data,
+      verbose,
     )
     return allocs, n_exp_nodes, expl_r, TSCppEngine._convert_train_data(tdata)
   

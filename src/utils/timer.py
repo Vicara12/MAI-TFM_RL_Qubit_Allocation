@@ -12,6 +12,7 @@ class Timer:
     self.calls = 0
     self.init_t = None
     self.name = name
+    self.last_t = None
     if self.name in Timer.INSTANCES.keys():
       raise Exception(f"a timer called {name} already exists")
     Timer.INSTANCES[self.name] = self
@@ -35,12 +36,19 @@ class Timer:
       raise Exception(f"timer.stop called before timer.start for timer {self.name}")
     run_time = end - self.init_t
     self.total_t += run_time
+    self.last_t = run_time
     self.calls += 1
     self.init_t = None
     return run_time
-
+  
   @property
   def time(self) -> float:
+    ''' Returns duration of last measurement.
+    '''
+    return self.last_t
+
+  @property
+  def avg_time(self) -> float:
     ''' Returns the average time over all calls.
 
     If there has been no call to start and stop this call throws an exception.
@@ -65,6 +73,7 @@ class Timer:
     self.total_t = 0
     self.calls = 0
     self.init_t = None
+    self.last_t = None
   
   @property
   def timer_decorator(self) -> Callable:

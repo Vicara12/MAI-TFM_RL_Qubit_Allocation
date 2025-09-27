@@ -28,15 +28,13 @@ public:
     at::Tensor logits;
     at::Tensor value;
 
-    TrainData(int n_steps, int n_qubits, int n_cores);
+    TrainData(int n_steps, int n_qubits, int n_cores, at::Device device);
   };
 
   TreeSearch(
     int n_qubits,
-    const at::Tensor& core_capacities,
-    const at::Tensor& core_conns,
-    bool verbose,
-    at::Device device_
+    int n_cores,
+    at::Device device
   );
 
   /**
@@ -52,18 +50,20 @@ public:
    * @return Tuple with the allocation tensor of shape [n_qubits, n_slices] and the total number of expanded nodes, exploration ratio and optionally data for training.
    */
   auto optimize(
+    const at::Tensor& core_conns,
+    const at::Tensor& core_caps,
     const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg,
-    bool ret_train_data
+    bool ret_train_data,
+    bool verbose
   ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
 
   
 private:
 
   struct Node;
-  bool verbose_;
   at::Device device_;
   int n_qubits_;
   int n_cores_;
@@ -83,6 +83,8 @@ private:
   ) -> void;
 
   auto initialize_search(
+    const at::Tensor& core_conns,
+    const at::Tensor& core_caps,
     const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,

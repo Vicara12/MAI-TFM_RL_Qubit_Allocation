@@ -12,7 +12,7 @@ class CircuitEncoder(torch.nn.Module):
   TRANSFORMER_MASKS: Dict[int, torch.Tensor] = {}
 
   @staticmethod
-  def comp_pos_emb(T, d_model) -> torch.Tensor:
+  def comp_pos_emb(T: int, d_model: int) -> torch.Tensor:
     position = torch.arange(T).unsqueeze(1)  # [T, 1]
     div_term = torch.exp(torch.arange(0, d_model, 2) * (-torch.log(torch.tensor(10000.0)) / d_model))
     pe = torch.zeros(T, d_model)
@@ -23,7 +23,7 @@ class CircuitEncoder(torch.nn.Module):
   
 
   @staticmethod
-  def get_pos_emb(T, d_model) -> torch.Tensor:
+  def get_pos_emb(T: int, d_model: int) -> torch.Tensor:
     request = (T, d_model)
     if request not in CircuitEncoder.POS_EMBEDDINGS.keys():
       CircuitEncoder.POS_EMBEDDINGS[request] = CircuitEncoder.comp_pos_emb(*request)
@@ -64,7 +64,7 @@ class CircuitEncoder(torch.nn.Module):
     device = adjacency_matrices.device
     # We will flatten adjacency matrix into a vector to make it easier to handle in the code
     (B, S, Q2) = adjacency_matrices.shape
-    pos_emb = CircuitEncoder.get_pos_emb(S, Q2).expand(B,S,Q2)
+    pos_emb = CircuitEncoder.get_pos_emb(S, Q2).to(device).expand(B,S,Q2)
     in_seq = pos_emb + adjacency_matrices
     out_seq = pos_emb + later_embeddings
     mask = CircuitEncoder.get_transformer_mask(S).to(device)

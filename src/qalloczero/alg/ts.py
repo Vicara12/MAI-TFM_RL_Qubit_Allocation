@@ -45,15 +45,18 @@ class TSEngine(ABC):
     def rm_model(self, name: str):
         raise NotImplementedError(
             f"rm_model not implemented for class {self.__class__.__name__}")
-    
+        
     @abstractmethod
     def optimize(
       self,
+      core_conns: torch.Tensor,
+      core_caps: torch.Tensor,
       slice_adjm: torch.Tensor,
       circuit_embs: torch.Tensor,
       alloc_steps: torch.Tensor,
       cfg: TSConfig,
-      ret_train_data: bool
+      ret_train_data: bool,
+      verbose: bool = False
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
         raise NotImplementedError(
             f"optimize not implemented for class {self.__class__.__name__}")

@@ -40,16 +40,11 @@ class TSPythonEngine(TSEngine):
   def __init__(
     self,
     n_qubits: int,
-    core_caps: torch.Tensor,
-    core_conns: torch.Tensor,
-    verbose: bool = False,
+    n_cores: int,
     device: str = "cpu"
   ):
     self.n_qubits = n_qubits
-    self.core_caps = core_caps.to(device)
-    self.core_conns = core_conns
-    self.n_cores = core_conns.shape[0]
-    self.verbose = verbose
+    self.n_cores = n_cores
     self.device = device
     
 
@@ -68,14 +63,17 @@ class TSPythonEngine(TSEngine):
 
   def optimize(
     self,
+    core_conns: torch.Tensor,
+    core_caps: torch.Tensor,
     slice_adjm: torch.Tensor,
     circuit_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
-    ret_train_data: bool
+    ret_train_data: bool,
+    verbose: bool = False,
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
     allocs, tdata = self._init_opt(
-      slice_adjm, circuit_embs, alloc_steps, cfg, ret_train_data)
+      core_conns, core_caps, slice_adjm, circuit_embs, alloc_steps, cfg, ret_train_data)
     n_expanded_nodes = 0
 
     for step in range(self.n_steps):
@@ -83,7 +81,7 @@ class TSPythonEngine(TSEngine):
       qubit0 = self.alloc_steps[self.root.allocation_step][1].item()
       qubit1 = self.alloc_steps[self.root.allocation_step][2].item()
 
-      if self.verbose:
+      if verbose:
         print(f" - Optimization step {step+1}/{self.n_steps}")
 
       if ret_train_data:
@@ -140,12 +138,16 @@ class TSPythonEngine(TSEngine):
 
   def _init_opt(
     self,
+    core_conns: torch.Tensor,
+    core_caps: torch.Tensor,
     slice_adjm: torch.Tensor,
     circuit_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
     ret_train_data: bool
   ) -> Tuple[torch.Tensor, TSTrainData]:
+    self.core_conns = core_conns.to(self.device)
+    self.core_caps = core_caps.to(self.device)
     self.slice_adjm = slice_adjm.to(self.device)
     self.circuit_embs = circuit_embs.to(self.device)
     self.alloc_steps = alloc_steps
@@ -166,7 +168,7 @@ class TSPythonEngine(TSEngine):
       )
       return allocs, tdata
     return allocs, None
-
+  
 
   def _iterate(self) -> Tuple[int, float, torch.Tensor, int]:
     # Visit count is equal to the current size of the tree (excluding non-expanded nodes)
@@ -207,14 +209,17 @@ class TSPythonEngine(TSEngine):
       return None, 0
     pol, v_norm = InferenceServer.inference(
       model_name="pred_model",
-      unpack=True,
-      qubits=self.alloc_steps[node.allocation_step][(1,2),].to(self.device),
-      prev_core_allocs=node.prev_allocs,
-      current_core_allocs=node.current_allocs,
-      core_capacities=node.core_caps,
-      circuit_emb=self.circuit_embs[node.current_slice],
-      slice_adj_mat=self.slice_adjm[node.current_slice],
+      unpack=False,
+      qubits=self.alloc_steps[node.allocation_step][(1,2),].to(self.device).unsqueeze(0),
+      prev_core_allocs=node.prev_allocs.unsqueeze(0),
+      current_core_allocs=node.current_allocs.unsqueeze(0),
+      core_capacities=node.core_caps.unsqueeze(0),
+      core_connectivity=self.core_conns,
+      circuit_emb=self.circuit_embs[node.current_slice].unsqueeze(0),
+      slice_adj_mat=self.slice_adjm[node.current_slice].unsqueeze(0),
     )
+    pol = pol.squeeze(0)
+    v_norm = v_norm.item()
     # Convert normalized value to raw value
     remaining_gates = self.alloc_steps[node.allocation_step,3]
     v = v_norm*(remaining_gates+1)

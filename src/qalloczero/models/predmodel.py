@@ -17,9 +17,6 @@ class PredictionModel(torch.nn.Module):
   Args:
     - n_qubits: Number of physical qubits among all cores.
     - n_cores: Number of cores.
-    - core_connectivity [C,C]: A symmetric matrix where item (i,j) indicates the cost of swapping
-      a qubit from core i to core j or vice versa. Assumed to be the same for all elements in the
-      batch.
     - number_emb_size: size of the embedding used to encode numbers (core capacity and swap cost).
     - glimpse_size: size of the glimpse (core embedding and output of the MHA).
     - alloc_ctx_emb_size: size of the allocation context embedding (which will be fed into MHA).
@@ -30,7 +27,6 @@ class PredictionModel(torch.nn.Module):
       self,
       n_qubits: int,
       n_cores: int,
-      core_connectivity: torch.Tensor,
       number_emb_size: int,
       n_heads: int,
   ):
@@ -38,7 +34,6 @@ class PredictionModel(torch.nn.Module):
     self.n_qubits = n_qubits
     self.n_cores = n_cores
     self.n_emb_size = number_emb_size
-    self.register_buffer("core_connectivity", core_connectivity)
 
     # Used to convert numbers to vector embeddings. We use this instead of proper embeddings in
     # order to make it more flexible (no fixed number of bins)
@@ -96,6 +91,7 @@ class PredictionModel(torch.nn.Module):
       prev_core_allocs: torch.Tensor,
       current_core_allocs: torch.Tensor,
       core_capacities: torch.Tensor,
+      core_connectivity: torch.Tensor
   ) -> torch.Tensor:
     ''' Computes the core embeddings (G) from a batch of cores.
 
@@ -113,11 +109,11 @@ class PredictionModel(torch.nn.Module):
     has_prev_core = (prev_core_allocs != self.n_cores).any(dim=-1) # Check rows that only contain -1
     swap_cost = torch.zeros_like(core_capacities, dtype=torch.float) # [B,C]
     prev_cores = prev_core_allocs[has_prev_core,qubits[has_prev_core,0]] # [B]
-    swap_cost[has_prev_core] = self.core_connectivity[prev_cores] # [B,C]
+    swap_cost[has_prev_core] = core_connectivity[prev_cores] # [B,C]
     # For double qubit allocs, compute the cost of allocation of the second
     double_qubits = (qubits[:,1] != -1) & has_prev_core
     prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()] # [b]
-    swap_cost[double_qubits] += self.core_connectivity[prev_cores,:] # [b,C]
+    swap_cost[double_qubits] += core_connectivity[prev_cores,:] # [b,C]
     # Encode scalars (allocation cost and core capacities) into embedding vectors
     # We will organize core info as [prev_core_allocs, current_core_allocs, swap_cost_emb, core_caps_emb],
     # so we put the two numerical values side to side so that we can then flatten the number vector
@@ -189,6 +185,7 @@ class PredictionModel(torch.nn.Module):
       prev_core_allocs: torch.Tensor,
       current_core_allocs: torch.Tensor,
       core_capacities: torch.Tensor,
+      core_connectivity: torch.Tensor,
       circuit_emb: torch.Tensor,
       slice_adj_mat: torch.Tensor,
   ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -207,6 +204,9 @@ class PredictionModel(torch.nn.Module):
         allocated yet.
       - core_capacities [B,C]: For a batch of size B, contains a vector of size C with the number of
         qubits that can still be allocated in each core.
+      - core_connectivity [C,C]: A symmetric matrix where item (i,j) indicates the cost of swapping
+        a qubit from core i to core j or vice versa. Assumed to be the same for all elements in the
+        batch.
       - circuit_emb [B,Q,Q]: For a batch of size B, contains a QxQ matrix which corresponds to the
         circuit embedding from the current slice until the end of the circuit.
       - slice_adj_mat [B,Q,Q]: For a batch of size B, contains a QxQ matrix with the one hot encoded
@@ -223,6 +223,7 @@ class PredictionModel(torch.nn.Module):
       prev_core_allocs=prev_core_allocs,
       current_core_allocs=current_core_allocs,
       core_capacities=core_capacities,
+      core_connectivity=core_connectivity,
     )
     alloc_ctx_embs = self._encode_circuit_context(
       circuit_emb=circuit_emb,
@@ -238,4 +239,4 @@ class PredictionModel(torch.nn.Module):
     # This will never be false, but is needed to tell jitter that the tensor is not optional
     assert attn_weights is not None, "Attention weights returned None"
     value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1))
-    return attn_weights.squeeze(1), value
+    return attn_weights.squeeze(1), value.squeeze(1)

@@ -32,7 +32,6 @@ def testing_pred_model():
   pred_model = PredictionModel(
     n_qubits=4,
     n_cores=2,
-    core_connectivity=core_connectivity,
     number_emb_size=4,
     n_heads=4,
   )
@@ -78,6 +77,7 @@ def testing_pred_model():
     prev_core_allocs=prev_core_allocs,
     current_core_allocs=current_core_allocs,
     core_capacities=core_capacities,
+    core_connectivity=core_connectivity,
     circuit_emb=circuit_emb,
     slice_adj_mat=slice_adj_mat,
   )
@@ -90,6 +90,7 @@ def testing_pred_model():
       prev_core_allocs=prev_core_allocs[i].unsqueeze(0),
       current_core_allocs=current_core_allocs[i].unsqueeze(0),
       core_capacities=core_capacities[i].unsqueeze(0),
+      core_connectivity=core_connectivity,
       circuit_emb=circuit_emb[i].unsqueeze(0),
       slice_adj_mat=slice_adj_mat[i].unsqueeze(0),
     )
@@ -105,14 +106,13 @@ def testing_pred_model():
 def test_cpp_engine():
   torch.manual_seed(42)
   n_qubits = 16
-  n_slices = 4
+  n_slices = 1
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_connectivity = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   pred_model = PredictionModel(
     n_qubits=n_qubits,
     n_cores=core_connectivity.shape[0],
-    core_connectivity=core_connectivity,
     number_emb_size=4,
     n_heads=4,
   )
@@ -123,9 +123,7 @@ def test_cpp_engine():
   encoder.eval()
   params = dict(
     n_qubits=n_qubits,
-    core_caps=core_caps,
-    core_conns=core_connectivity,
-    verbose=False,
+    n_cores=n_cores,
     device="cpu",
   )
   cpp_engine = TSCppEngine(**params)
@@ -133,11 +131,14 @@ def test_cpp_engine():
   cpp_engine.load_model("pred_model", pred_model)
   py_engine.load_model("pred_model", pred_model)
   opt_params = dict(
+    core_conns=core_connectivity,
+    core_caps=core_caps,
     slice_adjm=circuit.adj_matrices,
     circuit_embs=encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0),
     alloc_steps=circuit.alloc_steps,
     cfg=TSConfig(target_tree_size=1024),
-    ret_train_data=True
+    ret_train_data=False,
+    verbose=True,
   )
   torch.manual_seed(42)
   print("Starting C++ optimization:")
@@ -177,13 +178,10 @@ def finetune():
   embs = encoder(circuit.adj_matrices.unsqueeze(0)).squeeze(0)
   cpp_engine = TSCppEngine(
     n_qubits,
-    core_caps,
-    core_connectivity,
-    verbose=False,
+    n_cores,
     device="cuda",
   )
   cpp_engine.load_model("pred_model", pred_model)
-  train_data = False
   times = []
   costs = []
   timer = Timer.get('t')
@@ -196,7 +194,7 @@ def finetune():
         circuit_embs=embs,
         alloc_steps=circuit.alloc_steps,
         cfg=TSConfig(target_tree_size=tts),
-        ret_train_data=train_data
+        ret_train_data=False,
       )
     costs.append(solutionCost(res_py[0], core_connectivity))
     times.append(timer.time)
@@ -221,20 +219,49 @@ def grid_search():
 
 
 def test_alphazero():
+  test_run = True
+  test_train = False
+
   torch.manual_seed(42)
   n_qubits = 16
-  n_slices = 4
-  core_caps = torch.tensor([4]*4, dtype=torch.int)
+  n_slices = 8
+  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  azero = AlphaZero(hardware, verbose=True, backend=AlphaZero.Backend.Cpp)
+  azero = AlphaZero(
+    hardware,
+    device='cuda',
+    backend=AlphaZero.Backend.Python,
+  )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
-  circuit = sampler.sample()
-  with Timer.get('t'):
-    allocs, cost, _, _ = azero.optimize(circuit, TSConfig())
-  print(f"t={Timer.get('t').time:.2f}s c={cost}")
-  drawQubitAllocation(allocs, core_caps, circuit.slice_gates)
+  cfg=TSConfig(target_tree_size=32)
+
+  if test_run:
+    azero.save("checkpoint", overwrite=True)
+    azero_loaded = AlphaZero.load("checkpoint", device="cuda")
+    circuit = sampler.sample()
+    torch.manual_seed(42)
+    with Timer.get('t'):
+      allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=True)
+    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+    drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
+    torch.manual_seed(42)
+    with Timer.get('t'):
+      allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)
+    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+    drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
+  
+  if test_train:
+    train_cfg = AlphaZero.TrainConfig(
+      train_iters=100,
+      batch_size=3,
+      sampler=sampler,
+      lr=0.01,
+      pol_loss_w=0.6,
+      ts_cfg=cfg,
+    )
+    azero.train(train_cfg)
 
 
 
