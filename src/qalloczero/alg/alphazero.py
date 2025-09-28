@@ -34,6 +34,7 @@ class AlphaZero:
   class TrainConfig:
     train_iters: int
     batch_size: int # Number of optimized circuits per batch
+    n_data_augs: int
     sampler: CircuitSampler
     lr: float
     pol_loss_w: float
@@ -205,29 +206,36 @@ class AlphaZero:
       with self.timer:
         self.circ_enc.train()
         self.pred_model.train()
-        for batch, tdata in enumerate(train_data):
-          circ_embs = self.circ_enc(circ_adjs[batch].unsqueeze(0)).squeeze(0)
-          pols, values = self.pred_model(
-            qubits=tdata.qubits,
-            prev_core_allocs=tdata.prev_allocs,
-            current_core_allocs=tdata.curr_allocs,
-            core_capacities=tdata.core_caps,
-            core_connectivity=core_cons,
-            circuit_emb=circ_embs[tdata.slice_idx.flatten()],
-            slice_adj_mat=circ_adjs[batch][tdata.slice_idx.flatten()],
-          )
-          loss_pols = train_cfg.pol_loss_w * prob_loss(pols, tdata.logits)
-          loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, tdata.value)
-          loss = loss_pols + loss_vals
-          optimizer.zero_grad()
-          loss.backward()
-          optimizer.step()
-          avg_loss += loss
-          avg_loss_pol += loss_pols
-          avg_loss_val += loss_vals
+        for _ in range(train_cfg.n_data_augs):
+          perm = torch.randperm(self.hardware.n_qubits, dtype=torch.int, device=self.device)
+          for batch, tdata in enumerate(train_data):
+            new_adj = circ_adjs[batch][:,perm,:][:,:,perm]
+            qubit_mask = tdata.qubits != -1
+            new_qubits = tdata.qubits.clone()
+            new_qubits[qubit_mask] = perm[tdata.qubits[qubit_mask]]
+            circ_embs = self.circ_enc(new_adj.unsqueeze(0)).squeeze(0)
+            pols, values = self.pred_model(
+              qubits=new_qubits,
+              prev_core_allocs=tdata.prev_allocs[:,perm],
+              current_core_allocs=tdata.curr_allocs[:,perm],
+              core_capacities=tdata.core_caps,
+              core_connectivity=core_cons,
+              circuit_emb=circ_embs[tdata.slice_idx.flatten()],
+              slice_adj_mat=new_adj[tdata.slice_idx.flatten()],
+            )
+            loss_pols = train_cfg.pol_loss_w * prob_loss(pols, tdata.logits)
+            loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, tdata.value)
+            loss = loss_pols + loss_vals
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            avg_loss += loss
+            avg_loss_pol += loss_pols
+            avg_loss_val += loss_vals
+      n_iters = train_cfg.batch_size*train_cfg.n_data_augs
       print((
-        f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/train_cfg.batch_size} "
-        f" (pol={avg_loss_pol/train_cfg.batch_size:4f}, val={avg_loss_val/train_cfg.batch_size:4f})"
+        f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f} "
+        f" (pol={avg_loss_pol/n_iters:.4f}, val={avg_loss_val/n_iters:.4f})"
       ))
 
       self.backend.replace_model(self.pred_model)

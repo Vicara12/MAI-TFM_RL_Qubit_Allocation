@@ -256,6 +256,7 @@ def test_alphazero():
     train_cfg = AlphaZero.TrainConfig(
       train_iters=100,
       batch_size=3,
+      n_data_augs=10,
       sampler=sampler,
       lr=0.001,
       pol_loss_w=0.6,
