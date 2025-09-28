@@ -102,8 +102,8 @@ class TSPythonEngine(TSEngine):
       for step in range(self.n_steps-2,-1,-1):
         tdata.value[step] += tdata.value[step+1]
         # Normalize by dividing by remaining gates
-        tdata.value[step+1] /= self.alloc_steps[step+1][3]
-      tdata.value[0] /= self.alloc_steps[0][3]
+        tdata.value[step+1] /= (self.alloc_steps[step+1][3] + 1)
+      tdata.value[0] /= (self.alloc_steps[0][3] + 1)
     
     expl_r = self._exploration_ratio(n_expanded_nodes)
     self.root = None
@@ -131,9 +131,9 @@ class TSPythonEngine(TSEngine):
     tdata.qubits[step,0] = qubit0
     tdata.qubits[step,1] = qubit1
     tdata.slice_idx[step,0] = slice_idx
-    tdata.prev_allocs[step] = self.root.prev_allocs.cpu()
-    tdata.curr_allocs[step] = self.root.current_allocs.cpu()
-    tdata.core_caps[step] = self.root.core_caps.cpu()
+    tdata.prev_allocs[step] = self.root.prev_allocs
+    tdata.curr_allocs[step] = self.root.current_allocs
+    tdata.core_caps[step] = self.root.core_caps
 
 
   def _init_opt(
@@ -158,13 +158,13 @@ class TSPythonEngine(TSEngine):
     allocs = torch.empty([self.n_slices, self.n_qubits], dtype=torch.int)
     if ret_train_data:
       tdata = TSTrainData(
-        qubits=torch.empty([self.n_steps, 2], dtype=torch.int),
-        prev_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long),
-        curr_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long),
-        core_caps=torch.empty([self.n_steps, self.n_cores], dtype=torch.long),
-        slice_idx=torch.empty([self.n_steps, 1], dtype=torch.long),
-        logits=torch.empty([self.n_steps, self.n_cores], dtype=torch.float),
-        value=torch.empty([self.n_steps, 1], dtype=torch.float),
+        qubits=torch.empty([self.n_steps, 2], dtype=torch.int, device=self.device),
+        prev_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long, device=self.device),
+        curr_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long, device=self.device),
+        core_caps=torch.empty([self.n_steps, self.n_cores], dtype=torch.long, device=self.device),
+        slice_idx=torch.empty([self.n_steps, 1], dtype=torch.long, device=self.device),
+        logits=torch.empty([self.n_steps, self.n_cores], dtype=torch.float, device=self.device),
+        value=torch.empty([self.n_steps, 1], dtype=torch.float, device=self.device),
       )
       return allocs, tdata
     return allocs, None
@@ -232,6 +232,7 @@ class TSPythonEngine(TSEngine):
     if sum_pol < 1e-5:
       pol = torch.zeros_like(pol)
       n_valid_cores = sum(valid_cores)
+      assert n_valid_cores > 0, "No valid allocation possible"
       pol[valid_cores] = 1/n_valid_cores
     else:
       pol /= sum_pol

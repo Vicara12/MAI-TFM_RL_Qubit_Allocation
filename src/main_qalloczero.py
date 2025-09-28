@@ -219,13 +219,13 @@ def grid_search():
 
 
 def test_alphazero():
-  test_run = True
-  test_train = False
+  test_run = False
+  test_train = True
 
   torch.manual_seed(42)
-  n_qubits = 16
+  n_qubits = 4
   n_slices = 8
-  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
+  core_caps = torch.tensor([2,2], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
@@ -257,7 +257,7 @@ def test_alphazero():
       train_iters=100,
       batch_size=3,
       sampler=sampler,
-      lr=0.01,
+      lr=0.001,
       pol_loss_w=0.6,
       ts_cfg=cfg,
     )

@@ -149,6 +149,8 @@ class AlphaZero:
   ) -> Tuple[float, float, float, TSTrainData]:
     with self.timer:
       allocations, _, expl_ratio, train_data = self.backend.optimize(
+        core_caps=self.hardware.core_capacities,
+        core_conns=self.hardware.core_connectivity,
         slice_adjm=slice_adjm,
         circuit_embs=circ_embs,
         alloc_steps=alloc_steps,
@@ -156,7 +158,7 @@ class AlphaZero:
         ret_train_data=True,
         verbose=False,
       )
-    cost = solutionCost(allocations, self.core_conns)
+    cost = solutionCost(allocations, self.hardware.core_connectivity)
     return cost, self.timer.time, expl_ratio, train_data
   
 
@@ -180,6 +182,8 @@ class AlphaZero:
       circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
       circ_adjs = [circ.adj_matrices.to(self.device) for circ in circuits]
       circ_embs = self.circ_enc(torch.stack(circ_adjs))
+      if torch.any(torch.isnan(circ_embs)):
+        pass
       train_data = []
       for batch in range(train_cfg.batch_size):
         cost, time, expl_ratio, train_data_i = self._optimize_train(
@@ -197,6 +201,7 @@ class AlphaZero:
       avg_loss = 0
       avg_loss_pol = 0
       avg_loss_val = 0
+      core_cons = self.hardware.core_connectivity.to(self.device)
       with self.timer:
         self.circ_enc.train()
         self.pred_model.train()
@@ -207,6 +212,7 @@ class AlphaZero:
             prev_core_allocs=tdata.prev_allocs,
             current_core_allocs=tdata.curr_allocs,
             core_capacities=tdata.core_caps,
+            core_connectivity=core_cons,
             circuit_emb=circ_embs[tdata.slice_idx.flatten()],
             slice_adj_mat=circ_adjs[batch][tdata.slice_idx.flatten()],
           )
