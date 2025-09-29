@@ -1,6 +1,7 @@
 import torch
 import os
 import json
+import warnings
 from itertools import chain
 from enum import Enum
 from typing import Tuple, Self
@@ -78,8 +79,16 @@ class AlphaZero:
       backend=self.backend.__class__.__name__
     )
     if os.path.isdir(path):
+      warnings.warn(f"provided folder \"{path}\" already exists")
       if not overwrite:
-        raise Exception(f"Provided save directory already exists: {path}")
+        i = 2
+        while os.path.isdir(path + f"_v{i}"):
+          i += 1
+        path += f"_v{i}"
+        os.makedirs(path)
+        warnings.warn(f"Overwrite set to false, saving as \"{path}\"")
+      else:
+        warnings.warn(f"overwriting previous save file")
     else:
       os.makedirs(path)
     with open(os.path.join(path, "azero.json"), "w") as f:

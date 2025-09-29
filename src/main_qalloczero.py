@@ -223,16 +223,16 @@ def test_alphazero():
   test_train = True
 
   torch.manual_seed(42)
-  n_qubits = 4
-  n_slices = 8
-  core_caps = torch.tensor([2,2], dtype=torch.int)
+  n_qubits = 16
+  n_slices = 32
+  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   azero = AlphaZero(
     hardware,
     device='cuda',
-    backend=AlphaZero.Backend.Python,
+    backend=AlphaZero.Backend.Cpp,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg=TSConfig(target_tree_size=32)
@@ -254,15 +254,20 @@ def test_alphazero():
   
   if test_train:
     train_cfg = AlphaZero.TrainConfig(
-      train_iters=100,
+      train_iters=1000,
       batch_size=3,
       n_data_augs=10,
       sampler=sampler,
       lr=0.001,
-      pol_loss_w=0.6,
+      pol_loss_w=0.4,
       ts_cfg=cfg,
     )
-    azero.train(train_cfg)
+    try:
+      azero.train(train_cfg)
+    except KeyboardInterrupt:
+      pass
+    finally:
+      azero.save("trained", overwrite=False)
 
 
 
