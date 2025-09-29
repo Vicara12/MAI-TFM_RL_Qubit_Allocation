@@ -2,6 +2,7 @@
 #include <torch/extension.h>
 #include <vector>
 #include <memory>
+#include <atomic>
 #include "inference_server.hpp"
 
 
@@ -59,7 +60,7 @@ public:
     const OptConfig &cfg,
     bool ret_train_data,
     bool verbose
-  ) -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
+  ) const -> std::tuple<at::Tensor, int, float, std::optional<TrainData>>;
 
   auto get_is() -> InferenceServer&;
 
@@ -67,24 +68,17 @@ public:
 private:
 
   struct Node;
-  at::Device device_;
+  struct OptCtx;
+  mutable std::atomic<int> parallel_opt_counter;
   InferenceServer is_;
+  at::Device device_;
   int n_qubits_;
   int n_cores_;
-  int n_steps_;
-  at::Tensor core_caps_;
-  at::Tensor core_conns_;
-  // These are initialized at training
-  at::Tensor slice_adjm_;
-  at::Tensor circuit_embs_;
-  at::Tensor alloc_steps_;
-  OptConfig cfg_;
-  std::shared_ptr<Node> root_;
 
 
   auto store_train_data(
-    TrainData& tdata, int alloc_step, int slice_idx, int q0, int q1
-  ) -> void;
+    const OptCtx &ctx, TrainData& tdata, int alloc_step, int slice_idx, int q0, int q1
+  ) const -> void;
 
   auto initialize_search(
     const at::Tensor& core_conns,
@@ -93,15 +87,14 @@ private:
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg
-  ) -> at::Tensor;
+  ) const -> OptCtx;
 
-  auto iterate() -> std::tuple<int, float, at::Tensor, int>;
+  auto iterate(OptCtx &ctx) const -> std::tuple<int, float, at::Tensor, int>;
 
-  auto select_action(
-    std::shared_ptr<const Node> node
-  ) -> std::tuple<int, at::Tensor>;
+  auto select_action(std::shared_ptr<const Node> node, float temp) const -> std::tuple<int, at::Tensor>;
 
   auto new_policy_and_val(
+    const OptCtx &ctx,
     int q0,
     int q1,
     int remaining_gates,
@@ -109,20 +102,23 @@ private:
     const at::Tensor &prev_allocs,
     const at::Tensor &curr_allocs,
     const at::Tensor &core_caps
-  ) -> std::tuple<at::Tensor, at::Tensor>;
+  ) const -> std::tuple<at::Tensor, at::Tensor>;
 
-  auto build_root() -> std::shared_ptr<Node>;
+  auto build_root(const OptCtx &ctx) const -> std::shared_ptr<Node>;
 
-  auto expand_node(std::shared_ptr<Node> node) -> void;
+  auto expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) const -> void;
 
-  auto action_cost(std::shared_ptr<const Node> node, int action) -> float;
+  auto action_cost(const OptCtx &ctx, std::shared_ptr<const Node> node, int action) const -> float;
 
-  auto backprop(std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path) -> void;
+  auto backprop(std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path) const -> void;
 
-  auto ucb(std::shared_ptr<const Node> node, int action) -> float;
+  auto ucb(const OptCtx &ctx, std::shared_ptr<const Node> node, int action) const -> float;
 
-  auto select_child(std::shared_ptr<const Node> current_node) -> std::tuple<std::shared_ptr<Node>, int>;
+  auto select_child(
+    const OptCtx &ctx,
+    std::shared_ptr<const Node> current_node
+  ) const -> std::tuple<std::shared_ptr<Node>, int>;
 
-  auto exploration_ratio(int n_exp_nodes) -> float;
+  auto exploration_ratio(const OptCtx &ctx, int n_exp_nodes) const -> float;
 
 };

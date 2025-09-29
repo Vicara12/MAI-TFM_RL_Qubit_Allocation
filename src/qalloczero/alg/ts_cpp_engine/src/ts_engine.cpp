@@ -96,5 +96,6 @@ PYBIND11_MODULE(ts_cpp_engine, m) {
         .def("load_model", &TSEngine::load_model)
         .def("has_model", &TSEngine::has_model)
         .def("rm_model", &TSEngine::rm_model)
-        .def("optimize", &TSEngine::optimize);
+        // Release GIL to be able to optimize in parallel
+        .def("optimize", &TSEngine::optimize, py::call_guard<py::gil_scoped_release>());
 }

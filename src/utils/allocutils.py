@@ -1,9 +1,10 @@
 import torch
 from copy import copy
-from typing import Tuple
+from typing import Tuple, Optional
+from utils.customtypes import Hardware, Circuit
 
 
-def solutionCost(allocations: torch.Tensor, core_con: torch.Tensor) -> int:
+def sol_cost(allocations: torch.Tensor, core_con: torch.Tensor) -> int:
   ''' Compute the cost of the allocation with the given core connectivity matrix.
 
   The cost is computed as the number of swaps and the cost per swap.
@@ -20,8 +21,43 @@ def solutionCost(allocations: torch.Tensor, core_con: torch.Tensor) -> int:
   return cost.item()
 
 
+def check_sanity(
+  allocs: torch.Tensor,
+  circuit: Circuit,
+  hardware: Hardware
+):
+  nans = torch.isnan(allocs)
+  if torch.any(nans):
+    raise Exception((
+      f'Found Nan(s) in allocations at (slice,qubit): '
+      f'{(nans).nonzero(as_tuple=False).tolist()}'
+    ))
+  # Check valid core
+  valid_allocs = torch.logical_and(allocs >= 0, allocs < hardware.n_cores)
+  if not torch.all(valid_allocs):
+    raise Exception((
+      f'Some qubit(s) has been allocated to an invalid core (slice,qubit): '
+      f'{(~valid_allocs).nonzero(as_tuple=False).tolist()}'
+    ))
+  # Check core capacities
+  for i, slice in enumerate(allocs):
+    valid_core_caps = (slice.bincount(minlength=hardware.n_cores) <= hardware.core_capacities)
+    if not torch.all(valid_core_caps):
+      raise Exception((
+        f'Overflowed core capacity for slice {i} and core(s) '
+        f'{(~valid_core_caps).nonzero(as_tuple=False).tolist()}'
+      ))
+  # Check qubits that belong to same gate are in same core
+  for i, (circuit_slice, alloc_slice) in enumerate(zip(circuit.slice_gates, allocs)):
+    for gate in circuit_slice:
+      if not (alloc_slice[gate[0]] == alloc_slice[gate[1]]):
+        return ((
+          f'Qubits {gate} in slice {i} belong to the same gate but are in different cores: '
+          f'{alloc_slice[gate[0]]} and {alloc_slice[gate[1]]}'
+        ))
 
-def coreAllocsToQubitAllocs(allocations: torch.Tensor,
+
+def core_allocs_to_qubit_allocs(allocations: torch.Tensor,
                             core_capacities: Tuple[int, ...]
                           ) -> torch.Tensor:
   ''' Given a core allocation of the logical qubits, returns a plausible mapping to physical qubits.

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from functools import reduce
 from typing import Tuple, Optional
-from utils.allocutils import coreAllocsToQubitAllocs
+from utils.allocutils import core_allocs_to_qubit_allocs
 
 
 
@@ -80,7 +80,7 @@ def drawQubitAllocation(
       ax.hlines(y=num_pq-cl_pos-0.5, xmin=-0.3, xmax=num_steps+0.3, color='gray', linestyles='dotted', linewidth=1)
   
   # Get a plausible physical qubit allocation from core allocations
-  pq_allocations = coreAllocsToQubitAllocs(qubit_allocation, core_capacities)
+  pq_allocations = core_allocs_to_qubit_allocs(qubit_allocation, core_capacities)
   
   # Draw circuit gates in allocation
   if circuit_slice_gates is not None:

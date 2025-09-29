@@ -4,8 +4,9 @@ import json
 import warnings
 from itertools import chain
 from enum import Enum
-from typing import Tuple, Self
+from typing import Tuple, Self, List
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware
 from qalloczero.models.enccircuit import CircuitEncoder
@@ -13,7 +14,7 @@ from qalloczero.models.predmodel import PredictionModel
 from qalloczero.alg.ts import TSConfig, TSTrainData
 from qalloczero.alg.ts_python import TSPythonEngine
 from qalloczero.alg.ts_cpp import TSCppEngine
-from utils.allocutils import solutionCost
+from utils.allocutils import sol_cost
 from utils.timer import Timer
 
 
@@ -146,8 +147,42 @@ class AlphaZero:
       ret_train_data=False,
       verbose=verbose,
     )
-    cost = solutionCost(allocations, self.hardware.core_connectivity)
+    cost = sol_cost(allocations, self.hardware.core_connectivity)
     return allocations, cost, exp_nodes, expl_ratio
+  
+
+  def optimize_mult(
+      self,
+      circuits: List[Circuit],
+      ts_cfg: TSConfig,
+  ) -> List[Tuple[torch.Tensor, float, int, float]]:
+    circ_adjs = [circ.adj_matrices.to(self.device) for circ in circuits]
+    circ_embs = self.circ_enc(torch.stack(circ_adjs))
+
+    def work(azero, **kwargs):
+      allocations, exp_nodes, expl_ratio, _ = azero.backend.optimize(**kwargs)
+      cost = sol_cost(allocations, azero.hardware.core_connectivity)
+      return allocations, cost, exp_nodes, expl_ratio
+
+    with ThreadPoolExecutor(max_workers=len(circuits)) as executor:
+      # A dictionary of future : i so that we are able to map results to input circuits later on
+      future_map = {
+        executor.submit(
+          work,
+          self,
+          core_caps=self.hardware.core_capacities,
+          core_conns=self.hardware.core_connectivity,
+          slice_adjm=circ_adjs[i],
+          circuit_embs=circ_embs[i],
+          alloc_steps=circuits[i].alloc_steps,
+          cfg=ts_cfg,
+          ret_train_data=False,
+          verbose=False,
+        ) : i
+        for i in range(len(circuits))
+      }
+      results = [(future_map[future], future.result()) for future in as_completed(future_map)]
+    return map(lambda x: x[1], sorted(results, key=lambda x: x[0]))
   
 
   def _optimize_train(
@@ -168,7 +203,7 @@ class AlphaZero:
         ret_train_data=True,
         verbose=False,
       )
-    cost = solutionCost(allocations, self.hardware.core_connectivity)
+    cost = sol_cost(allocations, self.hardware.core_connectivity)
     return cost, self.timer.time, expl_ratio, train_data
   
 
