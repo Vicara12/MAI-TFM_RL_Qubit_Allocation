@@ -32,7 +32,7 @@ class TSPythonEngine(TSEngine):
 
     @property
     def value(self) -> float:
-      return 0 if (self.terminal or not self.visit_count) else self.value_sum/self.visit_count
+      return 0 if self.terminal else self.value_sum/(self.visit_count+1)
 
 
 

@@ -9,7 +9,7 @@
 class InferenceServer
 {
   mutable std::optional<torch::jit::script::Module> model_;
-  mutable std::map<size_t, torch::jit::script::Module> models_;
+  mutable std::map<size_t, torch::jit::script::Module&> models_;
 
   // The forward call expects IValues, not Tensors, so we need this function to cast them
   static inline auto to_ivalue(const torch::Tensor& t) -> torch::jit::IValue {return t;}
@@ -33,7 +33,8 @@ public:
     std::vector<torch::jit::IValue> inputs = {
       InferenceServer::to_ivalue(std::forward<Args>(args))...
     };
-    auto outputs = models_[*ctx] if ctx.has_value() else model_->forward(inputs);
+    // auto outputs = (ctx.has_value() ? models_[*ctx].forward(inputs) : model_->forward(inputs));
+    auto outputs = model_->forward(inputs);
 
     if (outputs.isTuple()) {
       auto tuple_elements = outputs.toTuple()->elements();

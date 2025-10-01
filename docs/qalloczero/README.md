@@ -9,7 +9,7 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.
 ```
 to generate the Makefile and
 ```bash
-cmake --build build
+cmake --build build -j4
 ```
 to generate the python bind.
 

@@ -156,9 +156,14 @@ def test_cpp_engine():
 
 
 def test_alphazero():
+  # test_run = True
+  # test_train = False
+
   test_run = False
-  test_parallel = True
-  test_train = False
+  test_train = True
+
+  test_parallel = False
+  
 
   torch.manual_seed(42)
   n_qubits = 16
@@ -173,21 +178,39 @@ def test_alphazero():
     backend=AlphaZero.Backend.Cpp,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
-  cfg=TSConfig(target_tree_size=64)
+  cfg = TSConfig(
+    target_tree_size=128,
+    noise=0.00,
+    dirichlet_alpha=0.7,
+    discount_factor=0.5,
+    action_sel_temp=0,
+    ucb_c1=0.1,
+    ucb_c2=500,
+  )
 
   if test_run:
-    azero.save("checkpoint", overwrite=True)
-    azero_loaded = AlphaZero.load("checkpoint", device="cuda")
+    cfg = TSConfig(
+      target_tree_size=256,
+      noise=0.00,
+      dirichlet_alpha=0.7,
+      discount_factor=0.0,
+      action_sel_temp=0.0,
+      # ucb_c1=0.1,
+      ucb_c1=0.1,
+      ucb_c2=500,
+    )
+    # azero.save("checkpoint", overwrite=True)
+    azero = AlphaZero.load("trained/azero_curriculum", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
+      allocs, cost, _, er = azero.optimize(circuit, cfg, verbose=True)
+    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates:.3f} er={er:.3f}")
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
-    torch.manual_seed(42)
-    with Timer.get('t'):
-      allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
+    # torch.manual_seed(42)
+    # with Timer.get('t'):
+    #   allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)
+    # print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
   
   if test_parallel:
     n_circuits = 1
@@ -215,18 +238,35 @@ def test_alphazero():
     print(f"Final t={Timer.get('t').time:.2f}s")
   
   if test_train:
-    train_cfg = AlphaZero.TrainConfig(
-      train_iters=1000,
-      batch_size=3,
-      n_data_augs=10,
-      sampler=sampler,
-      lr=0.001,
-      pol_loss_w=0.4,
-      ts_cfg=cfg,
+    cfg = TSConfig(
+      target_tree_size=128,
+      noise=0.40,
+      dirichlet_alpha=0.0,
+      discount_factor=0.0,
+      action_sel_temp=0.0,
+      # ucb_c1=0.1,
+      ucb_c1=0.1,
+      ucb_c2=10_000,
     )
     try:
-      azero.train(train_cfg)
+      # for p in range(1,5):
+      #   ns = 2**p
+      #   print(f"\n ===== TRAINING WITH {ns} SLICES ===== \n")
+      #   sampler = RandomCircuit(num_lq=n_qubits, num_slices=ns)
+      sampler = RandomCircuit(num_lq=n_qubits, num_slices=8)
+      train_cfg = AlphaZero.TrainConfig(
+        train_iters=250,
+        batch_size=4,
+        n_data_augs=8,
+        sampler=sampler,
+        lr=0.001,
+        pol_loss_w=0.9,
+        ts_cfg=cfg,
+      )
+      azero.train(train_cfg, train_device='cuda')
+      azero.save("trained/azero", overwrite=False)
     except KeyboardInterrupt:
       pass
-    finally:
-      azero.save("trained", overwrite=False)
+    except Exception:
+      azero.save("trained/azero", overwrite=False)
+      raise

@@ -48,8 +48,9 @@ class PredictionModel(torch.nn.Module):
     # time slice, as well as those stored in the current time slice, and two number embeddings, one
     # for the allocation cost and another for the core capacity
     self.qubit_allocation_joiner = torch.nn.Sequential(
-      torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
+      torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
       torch.nn.ReLU(),
+      torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
     )
     self.core_encoder = torch.nn.Sequential(
       torch.nn.Linear(n_qubits + 2*number_emb_size, n_qubits),
@@ -60,13 +61,23 @@ class PredictionModel(torch.nn.Module):
 
     # Encode circuit context into an embedding vector
     self.context_joiner = torch.nn.Sequential(
+      torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
+      torch.nn.ReLU(),
+      torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
+      torch.nn.ReLU(),
       torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
       torch.nn.ReLU(),
     )
     self.context_mha = torch.nn.MultiheadAttention(
       embed_dim=n_qubits,
-      num_heads=4,
+      num_heads=n_heads,
       batch_first=True,
+    )
+    self.context_ff = torch.nn.Sequential(
+      torch.nn.Linear(n_qubits, n_qubits),
+      torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits, n_qubits),
+      torch.nn.ReLU(),
     )
 
     # We use MHA to mix core information and allocation context information into a glimpse, which is
@@ -80,8 +91,11 @@ class PredictionModel(torch.nn.Module):
     self.value_network = torch.nn.Sequential(
       torch.nn.Linear(2*n_qubits, n_qubits),
       torch.nn.ReLU(),
-      torch.nn.Linear(n_qubits, 1),
+      torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits, n_qubits),
+      torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits, 1),
     )
 
   
@@ -176,6 +190,7 @@ class PredictionModel(torch.nn.Module):
       key=joined_context,
       value=joined_context
     )
+    alloc_ctx_emb = self.context_ff(alloc_ctx_emb)
     return alloc_ctx_emb
 
 
@@ -238,5 +253,5 @@ class PredictionModel(torch.nn.Module):
     )
     # This will never be false, but is needed to tell jitter that the tensor is not optional
     assert attn_weights is not None, "Attention weights returned None"
-    value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1))
-    return attn_weights.squeeze(1), value.squeeze(1)
+    value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1).squeeze(1))
+    return attn_weights.squeeze(1), value

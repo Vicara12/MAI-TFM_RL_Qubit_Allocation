@@ -31,9 +31,9 @@ auto InferenceServer::has_model() const -> bool {
 
 
 auto InferenceServer::new_context(size_t id) const -> void {
-  models_[id] = model_->clone();
+  // models_[id] = model_->clone();
 }
 
 auto InferenceServer::rm_context(size_t id) const -> void {
-  models_.erase(id);
+  // models_.erase(id);
 }

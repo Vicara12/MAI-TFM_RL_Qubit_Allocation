@@ -4,6 +4,7 @@ docs/qalloczero/qalloczero_notes.md
 .vscode
 **/__pycache__/**
 venv
-trained/russo
+trained/**
 misc
 src/qalloczero/alg/ts_cpp_engine/build
+allocation.svg

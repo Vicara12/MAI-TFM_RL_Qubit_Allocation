@@ -27,10 +27,10 @@ class AlphaZero:
   
   @dataclass
   class ModelConfigs:
-    ce_nheads: int = 4
-    ce_nlayers: int = 4
+    ce_nheads: int = 16
+    ce_nlayers: int = 16
     pm_nemb_sz: int = 4
-    pm_nheads: int = 4
+    pm_nheads: int = 16
 
   @dataclass
   class TrainConfig:
@@ -149,7 +149,7 @@ class AlphaZero:
     )
     cost = sol_cost(allocations, self.hardware.core_connectivity)
     return allocations, cost, exp_nodes, expl_ratio
-  
+
 
   def optimize_mult(
       self,
@@ -182,110 +182,151 @@ class AlphaZero:
         for i in range(len(circuits))
       }
       results = [(future_map[future], future.result()) for future in as_completed(future_map)]
-    return map(lambda x: x[1], sorted(results, key=lambda x: x[0]))
+    return list(map(lambda x: x[1], sorted(results, key=lambda x: x[0])))
   
 
-  def _optimize_train(
-      self,
-      slice_adjm: torch.Tensor,
-      circ_embs: torch.Tensor,
-      alloc_steps: torch.Tensor,
-      cfg: TSConfig,
-  ) -> Tuple[float, float, float, TSTrainData]:
-    with self.timer:
-      allocations, _, expl_ratio, train_data = self.backend.optimize(
-        core_caps=self.hardware.core_capacities,
-        core_conns=self.hardware.core_connectivity,
-        slice_adjm=slice_adjm,
-        circuit_embs=circ_embs,
-        alloc_steps=alloc_steps,
-        cfg=cfg,
-        ret_train_data=True,
-        verbose=False,
-      )
-    cost = sol_cost(allocations, self.hardware.core_connectivity)
-    return cost, self.timer.time, expl_ratio, train_data
-  
+  def _optimize_mult_train(
+    self,
+    circuits: List[Circuit],
+    adj_mats: torch.Tensor,
+    ts_cfg,
+  ) -> List[Tuple[float, float, TSTrainData]]:
+    adj_mats = adj_mats.to(self.device)
+    circ_embs = self.circ_enc(adj_mats)
+
+    def work(azero, **kwargs):
+      allocations, exp_nodes, expl_ratio, tdata = azero.backend.optimize(**kwargs)
+      norm_cost = sol_cost(allocations, azero.hardware.core_connectivity)/kwargs['alloc_steps'][0][3]
+      return norm_cost, expl_ratio, tdata
+
+    with ThreadPoolExecutor(max_workers=len(adj_mats)) as executor:
+      # A dictionary of future : i so that we are able to map results to input circuits later on
+      future_map = {
+        executor.submit(
+          work,
+          self,
+          core_caps=self.hardware.core_capacities,
+          core_conns=self.hardware.core_connectivity,
+          slice_adjm=adj_mats[i],
+          circuit_embs=circ_embs[i],
+          alloc_steps=circuits[i].alloc_steps,
+          cfg=ts_cfg,
+          ret_train_data=True,
+          verbose=False,
+        ) : i
+        for i in range(len(circuits))
+      }
+      results = [(future_map[future], future.result()) for future in as_completed(future_map)]
+    return list(map(lambda x: x[1], sorted(results, key=lambda x: x[0])))
+
 
   def train(
     self,
     train_cfg: TrainConfig,
+    train_device: str = '',
   ):
+    if not train_device:
+      train_device = self.device
     self.timer = Timer.get("_optimizer_timer")
     self.iter_timer = Timer.get("_train_iter_timer")
+    self.timer.reset()
+    self.iter_timer.reset()
     prob_loss = torch.nn.CrossEntropyLoss()
     val_loss = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(
       chain(self.circ_enc.parameters(), self.pred_model.parameters()), lr=train_cfg.lr
     )
 
-    for iter in range(train_cfg.train_iters):
-      self.iter_timer.start()
-      print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")
-      self.circ_enc.eval()
-      self.pred_model.eval()
-      circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
-      circ_adjs = [circ.adj_matrices.to(self.device) for circ in circuits]
-      circ_embs = self.circ_enc(torch.stack(circ_adjs))
-      if torch.any(torch.isnan(circ_embs)):
-        pass
-      train_data = []
-      for batch in range(train_cfg.batch_size):
-        cost, time, expl_ratio, train_data_i = self._optimize_train(
-          slice_adjm=circ_adjs[batch],
-          circ_embs=circ_embs[batch],
-          alloc_steps=circuits[batch].alloc_steps,
-          cfg=train_cfg.ts_cfg,
-        )
-        train_data.append(train_data_i)
+    try:
+      for iter in range(train_cfg.train_iters):
+        self.iter_timer.start()
+        print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")
+        self.circ_enc.eval()
+        self.circ_enc.to(self.device)
+        self.pred_model.eval()
+        self.pred_model.to(self.device)
+        circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
+        circ_adjs = torch.stack([circ.adj_matrices for circ in circuits])
+        avg_cost = 0
+        avg_expl_r = 0
+        train_data = []
+        with self.timer:
+          results = self._optimize_mult_train(circuits, circ_adjs, train_cfg.ts_cfg)
+        for (cost, er, tdata) in results:
+          avg_cost += cost
+          avg_expl_r += er
+          train_data.append(tdata)
         print((
-          f" - [{batch+1}/{train_cfg.batch_size}] t={time:.2f} c={cost:.1f} "
-          f"({cost/circuits[batch].n_gates:.2f}) er={expl_ratio:.3f} "
+          f" + Obtained train data: t={self.timer.time:.2f} ac={avg_cost/train_cfg.batch_size:.3f} "
+          f" er={avg_expl_r/train_cfg.batch_size:.3f}"
         ))
-      
-      avg_loss = 0
-      avg_loss_pol = 0
-      avg_loss_val = 0
-      core_cons = self.hardware.core_connectivity.to(self.device)
-      with self.timer:
-        self.circ_enc.train()
-        self.pred_model.train()
-        for _ in range(train_cfg.n_data_augs):
-          perm = torch.randperm(self.hardware.n_qubits, dtype=torch.int, device=self.device)
+        
+        avg_loss = 0
+        avg_loss_pol = 0
+        avg_loss_val = 0
+        circ_adjs = circ_adjs.to(train_device)
+        core_cons = self.hardware.core_connectivity.to(train_device)
+        with self.timer:
+          self.circ_enc.train()
+          self.circ_enc.to(train_device)
+          self.pred_model.train()
+          self.pred_model.to(train_device)
           for batch, tdata in enumerate(train_data):
-            new_adj = circ_adjs[batch][:,perm,:][:,:,perm]
-            qubit_mask = tdata.qubits != -1
-            new_qubits = tdata.qubits.clone()
-            new_qubits[qubit_mask] = perm[tdata.qubits[qubit_mask]]
-            circ_embs = self.circ_enc(new_adj.unsqueeze(0)).squeeze(0)
-            pols, values = self.pred_model(
-              qubits=new_qubits,
-              prev_core_allocs=tdata.prev_allocs[:,perm],
-              current_core_allocs=tdata.curr_allocs[:,perm],
-              core_capacities=tdata.core_caps,
-              core_connectivity=core_cons,
-              circuit_emb=circ_embs[tdata.slice_idx.flatten()],
-              slice_adj_mat=new_adj[tdata.slice_idx.flatten()],
-            )
-            loss_pols = train_cfg.pol_loss_w * prob_loss(pols, tdata.logits)
-            loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, tdata.value)
-            loss = loss_pols + loss_vals
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            avg_loss += loss
-            avg_loss_pol += loss_pols
-            avg_loss_val += loss_vals
-      n_iters = train_cfg.batch_size*train_cfg.n_data_augs
-      print((
-        f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f} "
-        f" (pol={avg_loss_pol/n_iters:.4f}, val={avg_loss_val/n_iters:.4f})"
-      ))
+            qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values = self._move_train_data(tdata, train_device)
+            for _ in range(train_cfg.n_data_augs):
+              perm, perm_qubits = self._perm_qubits(qubits, train_device)
+              new_adj = circ_adjs[batch][:,perm,:][:,:,perm]
+              circ_embs = self.circ_enc(new_adj.unsqueeze(0)).squeeze(0)
+              pols, values = self.pred_model(
+                qubits=perm_qubits,
+                prev_core_allocs=prev_allocs[:,perm],
+                current_core_allocs=curr_allocs[:,perm],
+                core_capacities=core_caps,
+                core_connectivity=core_cons,
+                circuit_emb=circ_embs[slice_idx],
+                slice_adj_mat=new_adj[slice_idx],
+              )
+              loss_pols = train_cfg.pol_loss_w * prob_loss(pols, ref_logits)
+              loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, ref_values)
+              loss = loss_pols + loss_vals
+              optimizer.zero_grad()
+              loss.backward()
+              optimizer.step()
+              avg_loss += loss
+              avg_loss_pol += loss_pols
+              avg_loss_val += loss_vals
+        n_iters = train_cfg.batch_size*train_cfg.n_data_augs
+        print((
+          f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f} "
+          f" (pol={avg_loss_pol/n_iters:.4f}, val={avg_loss_val/n_iters:.4f})"
+        ))
 
-      self.backend.replace_model(self.pred_model)
-      self.iter_timer.stop()
-      t_left = self.iter_timer.avg_time*(train_cfg.train_iters - iter - 1)
-      print((
-        f" + t={self.iter_timer.time:.2f}s "
-        f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
-      ))
+        self.backend.replace_model(self.pred_model)
+        self.iter_timer.stop()
+        t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)
+        print((
+          f" + t={self.iter_timer.time:.2f}s "
+          f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
+        ))
+    except KeyboardInterrupt as e:
+      if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
+        raise e
+  
+
+  def _move_train_data(self, tdata, train_device) -> Tuple[torch.Tensor, ...]:
+    qubits = tdata.qubits.to(train_device)
+    prev_allocs = tdata.prev_allocs.to(train_device)
+    curr_allocs = tdata.curr_allocs.to(train_device)
+    core_caps = tdata.core_caps.to(train_device)
+    slice_idx = tdata.slice_idx.to(train_device).flatten()
+    ref_logits = tdata.logits.to(train_device)
+    ref_values = tdata.value.to(train_device)
+    return qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values
+  
+
+  def _perm_qubits(self, qubits, device) -> Tuple[torch.Tensor, torch.Tensor]:
+    perm = torch.randperm(self.hardware.n_qubits, dtype=torch.int, device=device)
+    qubit_mask = qubits != -1
+    perm_qubits = qubits.clone()
+    perm_qubits[qubit_mask] = perm[qubits[qubit_mask]]
+    return perm, perm_qubits

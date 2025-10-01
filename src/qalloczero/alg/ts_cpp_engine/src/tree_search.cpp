@@ -67,7 +67,7 @@ struct TreeSearch::Node {
 
   auto expanded() const -> bool {return children.has_value();}
 
-  auto value() const -> float {return (terminal or (visit_count == 0) ? 0 : value_sum/visit_count);}
+  auto value() const -> float {return (terminal ? 0 : value_sum/(visit_count+1));}
 
   auto get_child(int action) const -> std::shared_ptr<Node> {
     if (children) {
@@ -256,7 +256,7 @@ auto TreeSearch::iterate(OptCtx &ctx) const -> std::tuple<int, float, at::Tensor
 
     if (not node->terminal)
       this->expand_node(ctx, node);
-    this->backprop(search_path);
+    this->backprop(search_path, ctx.cfg_.discount_factor);
   }
 
   auto [action, logits] = TreeSearch::select_action(ctx.root_, ctx.cfg_.action_sel_temp);
@@ -460,16 +460,19 @@ auto TreeSearch::action_cost(
 
 
 auto TreeSearch::backprop(
-  std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path
+  std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path,
+  float discount_factor
 ) const -> void {
-  std::get<0>(search_path.back())->visit_count += 1;
+  // Terminal nodes need to be updated because at the last alloc we need to know visit count
+  if (std::get<0>(search_path.back())->terminal)
+    std::get<0>(search_path.back())->visit_count += 1;
 
   for (int i = search_path.size() - 2; i >= 0; i--) {
     auto node = std::get<0>(search_path[i]);
     auto next_node = std::get<0>(search_path[i+1]);
     int action = std::get<1>(search_path[i+1]);
     float action_cost = node->action_cost(action);
-    node->value_sum += next_node->value() + action_cost;
+    node->value_sum +=  action_cost + (1 - discount_factor) * next_node->value();
     node->visit_count += 1;
   }
 }
@@ -480,13 +483,15 @@ auto TreeSearch::ucb(
   std::shared_ptr<const Node> node,
   int action
 ) const -> float {
-  float q_v = node->get_child(action)->value() + node->action_cost(action);
+  float rem_gates = ctx.alloc_steps_[node->alloc_step][3].item<float>();
+  float q_v = (node->get_child(action)->value() + node->action_cost(action)) / (rem_gates+1);
+  float q_inv = 2.0 / (1.0 + q_v) - 1;
   float prob_a = (*node->policy)[action].item<float>();
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
   float uncert = prob_a * std::sqrt(vc) / (1 + vc_act)
-    * (ctx.cfg_.ucb_c1 + std::log(vc + ctx.cfg_.ucb_c2 + 1)/ctx.cfg_.ucb_c2);
-  return q_v - uncert;
+                  * (ctx.cfg_.ucb_c1 + std::log(vc + ctx.cfg_.ucb_c2 + 1)/ctx.cfg_.ucb_c2);
+  return q_inv + uncert;
 }
 
 
@@ -494,15 +499,15 @@ auto TreeSearch::select_child(
   const OptCtx &ctx,
   std::shared_ptr<const Node> current_node
 ) const -> std::tuple<std::shared_ptr<Node>, int> {
-  double min_ucb = std::numeric_limits<double>::infinity();
+  double max_ucb = -std::numeric_limits<double>::infinity();
   int best_action = -1;
 
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(ctx, current_node, action);
     assert(not std::isnan(ucb_value));
     assert(not std::isinf(ucb_value));
-    if (ucb_value < min_ucb) {
-      min_ucb = ucb_value;
+    if (ucb_value > max_ucb) {
+      max_ucb = ucb_value;
       best_action = action;
     }
   }

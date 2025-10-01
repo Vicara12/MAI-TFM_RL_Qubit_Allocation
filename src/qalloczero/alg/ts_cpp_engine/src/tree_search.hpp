@@ -110,7 +110,10 @@ private:
 
   auto action_cost(const OptCtx &ctx, std::shared_ptr<const Node> node, int action) const -> float;
 
-  auto backprop(std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path) const -> void;
+  auto backprop(
+    std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path,
+    float discount_factor
+  ) const -> void;
 
   auto ucb(const OptCtx &ctx, std::shared_ptr<const Node> node, int action) const -> float;
 
