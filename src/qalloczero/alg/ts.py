@@ -27,6 +27,14 @@ class TSTrainData:
     value: torch.Tensor
 
 
+@dataclass
+class ModelConfigs:
+    ce_nheads: int = 16
+    ce_nlayers: int = 16
+    pm_nemb_sz: int = 4
+    pm_nheads: int = 16
+
+
 class TSEngine(ABC):
     ''' Abstract class for performing tree search with DL heuristics.
     '''

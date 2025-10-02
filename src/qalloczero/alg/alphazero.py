@@ -11,7 +11,7 @@ from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
-from qalloczero.alg.ts import TSConfig, TSTrainData
+from qalloczero.alg.ts import TSConfig, TSTrainData, ModelConfigs
 from qalloczero.alg.ts_python import TSPythonEngine
 from qalloczero.alg.ts_cpp import TSCppEngine
 from utils.allocutils import sol_cost
@@ -24,18 +24,12 @@ class AlphaZero:
   class Backend(Enum):
     Cpp = TSCppEngine
     Python = TSPythonEngine
-  
-  @dataclass
-  class ModelConfigs:
-    ce_nheads: int = 16
-    ce_nlayers: int = 16
-    pm_nemb_sz: int = 4
-    pm_nheads: int = 16
 
   @dataclass
   class TrainConfig:
     train_iters: int
     batch_size: int # Number of optimized circuits per batch
+    noise_decrease_factor: int
     n_data_augs: int
     sampler: CircuitSampler
     lr: float
@@ -92,7 +86,7 @@ class AlphaZero:
         warnings.warn(f"overwriting previous save file")
     else:
       os.makedirs(path)
-    with open(os.path.join(path, "azero.json"), "w") as f:
+    with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
     torch.save(self.circ_enc.state_dict(), os.path.join(path, "circ_enc.pt"))
     torch.save(self.pred_model.state_dict(), os.path.join(path, "pred_mod.pt"))
@@ -102,8 +96,11 @@ class AlphaZero:
   def load(path: str, device: str = "cpu") -> Self:
     if not os.path.isdir(path):
       raise Exception(f"Provided load directory does not exist: {path}")
-    with open(os.path.join(path, "azero.json"), "r") as f:
+    with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
+    # Add backend so that it is possible to load non AlphaZero saved models
+    if 'backend' not in params.keys():
+      params["backend"] = 'TSCppEngine'
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
     loaded = AlphaZero(hardware=hardware, device=device, backend=backend)
@@ -250,6 +247,7 @@ class AlphaZero:
         avg_cost = 0
         avg_expl_r = 0
         train_data = []
+        train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor
         with self.timer:
           results = self._optimize_mult_train(circuits, circ_adjs, train_cfg.ts_cfg)
         for (cost, er, tdata) in results:
@@ -258,7 +256,7 @@ class AlphaZero:
           train_data.append(tdata)
         print((
           f" + Obtained train data: t={self.timer.time:.2f} ac={avg_cost/train_cfg.batch_size:.3f} "
-          f" er={avg_expl_r/train_cfg.batch_size:.3f}"
+          f" er={avg_expl_r/train_cfg.batch_size:.3f} (noise={train_cfg.ts_cfg.noise:.3f})"
         ))
         
         avg_loss = 0
