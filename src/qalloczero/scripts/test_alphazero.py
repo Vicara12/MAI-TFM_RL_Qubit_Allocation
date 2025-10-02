@@ -206,12 +206,12 @@ def test_alphazero():
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, _, er = azero.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates:.3f} er={er:.3f}")
+    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f} er={er:.3f}")
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
     # torch.manual_seed(42)
     # with Timer.get('t'):
     #   allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)
-    # print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})\n{allocs}")
+    # print(f"t={Timer.get('t').time:.2f}s c={cost}/{circuit.n_gates_norm} ({cost/circuit.n_gates_norm:.3f})\n{allocs}")
   
   if test_parallel:
     n_circuits = 1
@@ -223,7 +223,7 @@ def test_alphazero():
       for i, circuit in enumerate(circuits):
         allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=False)
         check_sanity(allocs, circuit, hardware)
-        print(f"[{i+1}/{n_circuits}] c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+        print(f"[{i+1}/{n_circuits}] c={cost}/{circuit.n_gates_norm} ({cost/circuit.n_gates_norm:.3f})")
     print(f"Final t={Timer.get('t').time:.2f}s")
     
     # Parallel optimize
@@ -234,8 +234,7 @@ def test_alphazero():
     for i, res in enumerate(results):
       allocs, cost, _, _ = res
       check_sanity(allocs, circuits[i], hardware)
-      n_gates = circuits[i].n_gates
-      print(f"[{i+1}/{n_circuits}] c={cost}/{n_gates} ({cost/n_gates:.3f})")
+      print(f"[{i+1}/{n_circuits}] c={cost/circuits[i].n_gates_norm:.3f}")
     print(f"Final t={Timer.get('t').time:.2f}s")
   
   if test_train:

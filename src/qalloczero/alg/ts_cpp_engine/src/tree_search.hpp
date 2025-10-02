@@ -46,7 +46,7 @@ public:
    * @param circuit_embs Tensor of shape [n_slices, n_qubits, n_qubits] with the per-slice circuit embeddings.
    * @param alloc_steps Tensor of shape [n_steps, 4] with, for each allocation step, the slice it
    * corresponds to, the two qubits involved (the second one must be set to -1 for single qubit
-   * allocations) and the number of remaining gates to be allocated.
+   * allocations) and the number of remaining gates to be allocated (excluding the first slice).
    * @param cfg OptConfig struct with the optimization parameters.
    * @param ret_train_data If true, a TrainData struct is returned with the data necesary to re-train the model.
    * @return Tuple with the allocation tensor of shape [n_qubits, n_slices] and the total number of expanded nodes, exploration ratio and optionally data for training.

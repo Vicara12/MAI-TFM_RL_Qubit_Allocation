@@ -18,8 +18,14 @@ class Circuit:
   @property
   def n_gates(self) -> int:
     if not hasattr(self, "n_gates_"):
-      self.n_gates_ = self._get_N_gates()
+      self.n_gates_ = sum(len(slice_i) for slice_i in self.slice_gates)
     return self.n_gates_
+  
+  @property
+  def n_gates_norm(self) -> int:
+    if not hasattr(self, "n_gates_norm_"):
+      self.n_gates_norm_ = sum(len(slice_i) for slice_i in self.slice_gates[1:])
+    return self.n_gates_norm_
     
   @property
   def alloc_steps(self) -> torch.Tensor:
@@ -39,8 +45,6 @@ class Circuit:
       self.adj_matrices_ = self._get_adj_matrices()
     return self.adj_matrices_
 
-  def _get_N_gates(self) -> int:
-    return sum(len(slice_i) for slice_i in self.slice_gates)
 
   def _get_adj_matrices(self) -> torch.Tensor:
     matrices = torch.eye(self.n_qubits).repeat(self.n_slices,1,1)
@@ -57,7 +61,7 @@ class Circuit:
     columns: the first item indicates the slice index of the allocation; the
     second the first qubit to be allocated; the third the second qubit to be
     allocated or -1 if single qubit allocation step; and the fourth column the
-    number of gates that remain to be allocated.
+    number of gates that remain to be allocated (excluding those in the first slice).
     '''
     gate_counter = 0
     n_steps = self.n_slices*self.n_qubits - self.n_gates
@@ -69,15 +73,15 @@ class Circuit:
         allocations[alloc_step,0] = slice_i
         allocations[alloc_step,1] = gate[0]
         allocations[alloc_step,2] = gate[1]
-        allocations[alloc_step,3] = self.n_gates - gate_counter
-        gate_counter += 1
+        allocations[alloc_step,3] = self.n_gates_norm - gate_counter
+        gate_counter += 1 if slice_i != 0 else 0
         free_qubits -= set(gate) # Remove qubits in gates from set of free qubits
         alloc_step += 1
       for q in free_qubits:
         allocations[alloc_step,0] = slice_i
         allocations[alloc_step,1] = q
         allocations[alloc_step,2] = -1
-        allocations[alloc_step,3] = self.n_gates - gate_counter
+        allocations[alloc_step,3] = self.n_gates_norm - gate_counter
         alloc_step += 1
     return allocations
   

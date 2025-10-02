@@ -39,12 +39,12 @@ def test_direct_alloc():
 
   if test_run:
     # azero.save("checkpoint", overwrite=True)
-    # azero = DAConfig.load("trained/azero_curriculum", device="cuda")
+    # azero = DirectAllocator.load("trained/azero_v6", device="cuda")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, = azero.optimize(circuit, cfg)
-    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates:.3f}\n{allocs}")
+    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f}\n{allocs}")
     check_sanity(allocs, circuit, hardware)
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
   
@@ -58,7 +58,7 @@ def test_direct_alloc():
       for i, circuit in enumerate(circuits):
         allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=False)
         check_sanity(allocs, circuit, hardware)
-        print(f"[{i+1}/{n_circuits}] c={cost}/{circuit.n_gates} ({cost/circuit.n_gates:.3f})")
+        print(f"[{i+1}/{n_circuits}] c={cost/circuit.n_gates_norm:.3f}")
     print(f"Final t={Timer.get('t').time:.2f}s")
     
     # Parallel optimize
@@ -69,8 +69,7 @@ def test_direct_alloc():
     for i, res in enumerate(results):
       allocs, cost, _, _ = res
       check_sanity(allocs, circuits[i], hardware)
-      n_gates = circuits[i].n_gates
-      print(f"[{i+1}/{n_circuits}] c={cost}/{n_gates} ({cost/n_gates:.3f})")
+      print(f"[{i+1}/{n_circuits}] c={cost/circuits[i].n_gates_norm:.3f}")
     print(f"Final t={Timer.get('t').time:.2f}s")
   
   if test_train:
