@@ -59,6 +59,7 @@ class QubitCommEmbedding(nn.Module):
 
         h = self.communication_layers(tokens)  # [B, Q+2, d]
         h_agents = h[:, :Q]  # discard context outputs, return agent embds only
+        #TODO: I'm not sure about discarding the context outputs. 
 
         if self.norm is not None:
             h_agents = self.norm(h_agents)
