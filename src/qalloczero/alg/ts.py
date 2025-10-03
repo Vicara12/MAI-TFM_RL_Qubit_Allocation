@@ -29,10 +29,10 @@ class TSTrainData:
 
 @dataclass
 class ModelConfigs:
-    ce_nheads: int = 16
-    ce_nlayers: int = 16
+    ce_nheads: int = 4
+    ce_nlayers: int = 4
     pm_nemb_sz: int = 4
-    pm_nheads: int = 16
+    pm_nheads: int = 4
 
 
 class TSEngine(ABC):

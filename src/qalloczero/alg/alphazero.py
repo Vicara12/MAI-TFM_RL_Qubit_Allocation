@@ -247,7 +247,6 @@ class AlphaZero:
         avg_cost = 0
         avg_expl_r = 0
         train_data = []
-        train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor
         with self.timer:
           results = self._optimize_mult_train(circuits, circ_adjs, train_cfg.ts_cfg)
         for (cost, er, tdata) in results:
@@ -268,6 +267,7 @@ class AlphaZero:
           self.circ_enc.train()
           self.circ_enc.to(train_device)
           self.pred_model.train()
+          self.pred_model.output_logits(True)
           self.pred_model.to(train_device)
           for batch, tdata in enumerate(train_data):
             qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values = self._move_train_data(tdata, train_device)
@@ -293,12 +293,14 @@ class AlphaZero:
               avg_loss += loss
               avg_loss_pol += loss_pols
               avg_loss_val += loss_vals
+        self.pred_model.output_logits(False)
         n_iters = train_cfg.batch_size*train_cfg.n_data_augs
         print((
           f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f} "
           f" (pol={avg_loss_pol/n_iters:.4f}, val={avg_loss_val/n_iters:.4f})"
         ))
 
+        train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor
         self.backend.replace_model(self.pred_model)
         self.iter_timer.stop()
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)

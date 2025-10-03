@@ -41,7 +41,8 @@ class PredictionModel(torch.nn.Module):
       torch.nn.Linear(1,number_emb_size//2),
       torch.nn.ReLU(),
       torch.nn.Linear(number_emb_size//2, number_emb_size),
-      torch.nn.ReLU()
+      torch.nn.ReLU(),
+      torch.nn.Linear(number_emb_size, number_emb_size),
     )
 
     # The information of a core includes a one hot vector of the qubits it stored in the previous
@@ -57,6 +58,7 @@ class PredictionModel(torch.nn.Module):
       torch.nn.ReLU(),
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.Linear(n_qubits, n_qubits),
     )
 
     # Encode circuit context into an embedding vector
@@ -66,7 +68,6 @@ class PredictionModel(torch.nn.Module):
       torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
       torch.nn.ReLU(),
       torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
-      torch.nn.ReLU(),
     )
     self.context_mha = torch.nn.MultiheadAttention(
       embed_dim=n_qubits,
@@ -97,6 +98,9 @@ class PredictionModel(torch.nn.Module):
       torch.nn.ReLU(),
       torch.nn.Linear(n_qubits, 1),
     )
+
+    self.inv_sqrt_d = 1 / torch.sqrt(torch.tensor(self.n_qubits))
+    self.output_logits_ = False
 
   
   def _encode_cores(
@@ -194,6 +198,10 @@ class PredictionModel(torch.nn.Module):
     return alloc_ctx_emb
 
 
+  def output_logits(self, value: bool):
+    self.output_logits_ = value
+
+
   def forward(
       self,
       qubits: torch.Tensor,
@@ -245,13 +253,17 @@ class PredictionModel(torch.nn.Module):
       slice_adj_mat=slice_adj_mat,
       qubits=qubits,
     )
-    glimpses, attn_weights = self.mha(
+    glimpses, _ = self.mha(
       query=alloc_ctx_embs,
       key=core_embs,
       value=core_embs,
-      need_weights=True,
+      need_weights=False,
     )
-    # This will never be false, but is needed to tell jitter that the tensor is not optional
-    assert attn_weights is not None, "Attention weights returned None"
     value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1).squeeze(1))
-    return attn_weights.squeeze(1), value
+    # Attention weights need to be computed by hand as the gradient is not able to flow backwards
+    # through the default MHA implementation. I think this is a but in torch.
+    attn_logits = torch.bmm(alloc_ctx_embs, core_embs.transpose(1,2)).squeeze(1) * self.inv_sqrt_d
+    if self.output_logits_:
+      return attn_logits, value
+    attn_weights = torch.softmax(attn_logits, dim=-1)
+    return attn_weights, value

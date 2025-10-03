@@ -245,7 +245,7 @@ def test_alphazero():
       discount_factor=0.0,
       action_sel_temp=0.0,
       # ucb_c1=0.1,
-      ucb_c1=0.1,
+      ucb_c1=1,
       ucb_c2=10_000,
     )
     try:

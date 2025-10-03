@@ -9,11 +9,11 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 
 
 def test_direct_alloc():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -26,7 +26,8 @@ def test_direct_alloc():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  azero = DirectAllocator(
+  # allocator = DirectAllocator.load("trained/direct_allocator_v2", device="cuda")
+  allocator = DirectAllocator(
     hardware,
     device='cuda',
   )
@@ -38,12 +39,10 @@ def test_direct_alloc():
   )
 
   if test_run:
-    # azero.save("checkpoint", overwrite=True)
-    # azero = DirectAllocator.load("trained/azero_v6", device="cuda")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, = azero.optimize(circuit, cfg)
+      allocs, cost, = allocator.optimize(circuit, cfg)
     print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f}\n{allocs}")
     check_sanity(allocs, circuit, hardware)
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
@@ -56,7 +55,7 @@ def test_direct_alloc():
     print("[*] Optimization in series")
     with Timer.get('t'):
       for i, circuit in enumerate(circuits):
-        allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=False)
+        allocs, cost, _, _ = allocator.optimize(circuit, cfg, verbose=False)
         check_sanity(allocs, circuit, hardware)
         print(f"[{i+1}/{n_circuits}] c={cost/circuit.n_gates_norm:.3f}")
     print(f"Final t={Timer.get('t').time:.2f}s")
@@ -65,7 +64,7 @@ def test_direct_alloc():
     torch.manual_seed(42)
     print("\n[*] Optimization in parallel")
     with Timer.get('t'):
-      results = azero.optimize_mult(circuits, cfg)
+      results = allocator.optimize_mult(circuits, cfg)
     for i, res in enumerate(results):
       allocs, cost, _, _ = res
       check_sanity(allocs, circuits[i], hardware)
@@ -74,25 +73,21 @@ def test_direct_alloc():
   
   if test_train:
     try:
-      # for p in range(1,5):
-      #   ns = 2**p
-      #   print(f"\n ===== TRAINING WITH {ns} SLICES ===== \n")
-      #   sampler = RandomCircuit(num_lq=n_qubits, num_slices=ns)
-      sampler = RandomCircuit(num_lq=n_qubits, num_slices=8)
-      # train_cfg = AlphaZero.TrainConfig(
-      #   train_iters=500,
-      #   batch_size=4,
-      #   n_data_augs=8,
-      #   sampler=sampler,
-      #   noise_decrease_factor=0.99,
-      #   lr=0.001,
-      #   pol_loss_w=0.9,
-      #   ts_cfg=cfg,
-      # )
-      # azero.train(train_cfg, train_device='cuda')
-      azero.save("trained/azero", overwrite=False)
+      train_cfg = DirectAllocator.TrainConfig(
+        train_iters=1_000,
+        batch_size=20,
+        validation_size=10,
+        initial_noise=0.3,
+        noise_decrease_factor=0.95,
+        sampler=RandomCircuit(num_lq=n_qubits, num_slices=4),
+        lr=1e-4,
+        invalid_move_penalty=0.3,
+        repl_significance=0.05,
+      )
+      allocator.train(train_cfg)
+      allocator.save("trained/direct_allocator", overwrite=False)
     except KeyboardInterrupt:
       pass
     except Exception:
-      azero.save("trained/azero", overwrite=False)
+      allocator.save("trained/direct_allocator", overwrite=False)
       raise
