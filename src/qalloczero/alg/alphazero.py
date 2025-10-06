@@ -4,11 +4,12 @@ import json
 import warnings
 from itertools import chain
 from enum import Enum
-from typing import Tuple, Self, List
+from typing import Tuple, Self, List, Optional
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware
+from utils.gradient_tools import print_grad
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
 from qalloczero.alg.ts import TSConfig, TSTrainData, ModelConfigs
@@ -35,6 +36,7 @@ class AlphaZero:
     lr: float
     pol_loss_w: float
     ts_cfg: TSConfig
+    print_grad_each: Optional[int] = None
 
 
   def __init__(
@@ -233,6 +235,7 @@ class AlphaZero:
     optimizer = torch.optim.Adam(
       chain(self.circ_enc.parameters(), self.pred_model.parameters()), lr=train_cfg.lr
     )
+    self.pgrad_counter = 1
 
     try:
       for iter in range(train_cfg.train_iters):
@@ -308,6 +311,14 @@ class AlphaZero:
           f" + t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
+        if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
+          print(f"\n[+] Gradient information for prediction model:")
+          print_grad(self.pred_model)
+          print(f"\n[+] Gradient information for circuit encoder:")
+          print_grad(self.circ_enc)
+          self.pgrad_counter = 1
+        else:
+          self.pgrad_counter += 1
     except KeyboardInterrupt as e:
       if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
         raise e

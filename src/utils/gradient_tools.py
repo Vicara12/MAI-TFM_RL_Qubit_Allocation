@@ -17,6 +17,6 @@ def print_graph(op, level=0):
 def print_grad(model):
   for name, param in model.named_parameters():
     if param.grad is None:
-      print(f"none grad: {name}")
+      print(f"No grad: \t{name}")
     else:
-      print(f"mean={param.grad.mean().item():.8f} absmax={param.grad.abs().max().item():.8f}: {name}")
+      print(f"mean={param.grad.mean().item():.8f} \tabsmax={param.grad.abs().max().item():.8f}: \t{name}")

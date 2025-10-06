@@ -240,7 +240,7 @@ def test_alphazero():
   if test_train:
     cfg = TSConfig(
       target_tree_size=256,
-      noise=0.50,
+      noise=0.00,
       dirichlet_alpha=0.0,
       discount_factor=0.0,
       action_sel_temp=0.0,
@@ -255,14 +255,15 @@ def test_alphazero():
       #   sampler = RandomCircuit(num_lq=n_qubits, num_slices=ns)
       sampler = RandomCircuit(num_lq=n_qubits, num_slices=8)
       train_cfg = AlphaZero.TrainConfig(
-        train_iters=500,
+        train_iters=2_000,
         batch_size=4,
-        n_data_augs=8,
+        n_data_augs=16,
         sampler=sampler,
         noise_decrease_factor=0.99,
         lr=0.001,
         pol_loss_w=0.9,
         ts_cfg=cfg,
+        print_grad_each=5,
       )
       azero.train(train_cfg, train_device='cuda')
       azero.save("trained/azero", overwrite=False)

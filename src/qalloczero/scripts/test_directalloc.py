@@ -83,6 +83,7 @@ def test_direct_alloc():
         lr=1e-4,
         invalid_move_penalty=0.3,
         repl_significance=0.05,
+        print_grad_each=10,
       )
       allocator.train(train_cfg)
       allocator.save("trained/direct_allocator", overwrite=False)
