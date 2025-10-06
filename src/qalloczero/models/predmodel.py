@@ -199,14 +199,10 @@ class PredictionModel(torch.nn.Module):
     qubit_matrix[torch.arange(B),qubits[:,0]] = 1
     qubit_matrix[double_qubits, qubits[double_qubits,1]] = 1
 
-    joined_context = self.context_joiner(
-      torch.cat([circuit_emb.unsqueeze(1), slice_adj_mat.unsqueeze(1)], dim=1)
-    ).squeeze(1)
-
     alloc_ctx_emb, _ = self.context_mha(
       query=qubit_matrix.unsqueeze(1),
-      key=joined_context,
-      value=joined_context
+      key=circuit_emb,
+      value=circuit_emb
     )
     alloc_ctx_emb = self.context_ff(alloc_ctx_emb)
     return alloc_ctx_emb
@@ -215,6 +211,65 @@ class PredictionModel(torch.nn.Module):
   def output_logits(self, value: bool):
     self.output_logits_ = value
 
+  
+  def _get_qs(self, qubits: torch.Tensor, C: int, device: torch.DeviceObjType) -> torch.Tensor:
+    B = qubits.shape[0]
+    double_qubits = (qubits[:,1] != -1)
+    qubit_matrix = torch.zeros((B,self.n_qubits), dtype=torch.float, device=device) # [B,Q]
+    # Encode qubits as one hot
+    qubit_matrix[torch.arange(B),qubits[:,0]] = 1
+    qubit_matrix[double_qubits, qubits[double_qubits,1]] = 1
+    qubit_matrix = qubit_matrix.unsqueeze(1).expand(-1,C,-1) # [B,C,Q]
+    return qubit_matrix
+  
+
+  def _get_prev_cores_one_hot(self, prev_core_allocs: torch.Tensor, C: int) -> torch.Tensor:
+    # Detect batch items that do not have previous core (all items are set to n_cores)
+    has_prev_core = (prev_core_allocs != self.n_cores).any(dim=-1)
+    # Transform prev_core_allocs of size [B,Q] with items in the range 0:C to a one hot version of
+    # size [B,C,Q] with a 1 in position (b,c,q) if in prev_core_allocs[b,q] == c, 0 otherwise
+    prev_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
+      prev_core_allocs,
+      num_classes=C+1,
+    ).permute(0,2,1) # [B,C+1,Q]
+    # Discard core C (no previous core assigned) and fill cores without previous assignment with 1
+    prev_c_allocs_sparse = prev_c_allocs_sparse[:,:-1,:]
+    prev_c_allocs_sparse[~has_prev_core,:,:] = 1
+
+
+  def _get_curr_cores_one_hot(self, current_core_allocs: torch.Tensor, C: int) -> torch.Tensor:
+    curr_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
+      current_core_allocs,
+      num_classes=C+1,
+    ).permute(0,2,1) # [B,C+1,Q]
+    curr_c_allocs_sparse = curr_c_allocs_sparse[:,:-1,:] # [B,C,Q]
+    return curr_c_allocs_sparse
+  
+
+  def _get_core_caps(
+    self,
+    core_capacities: torch.Tensor,
+    Q: int,
+    device: torch.DeviceObjType
+  ) -> torch.Tensor:
+    (B,C) = core_capacities.shape
+    core_caps = torch.zeros([B,C], device=device) # [B,C]
+    core_caps += (core_capacities >= 1).float()
+    core_caps += (core_capacities >= 2).float()
+    core_caps *= 0.5
+    core_caps = core_caps.unsqueeze(0).extend(-1,-1,Q) # [B,C,Q]
+    return core_caps
+
+
+  def _get_core_cost(self, prev_core_allocs: torch.Tensor, ) -> torch.Tensor:
+    has_prev_core = (prev_core_allocs != self.n_cores).any(dim=-1) # Check rows that only contain -1
+    swap_cost = torch.zeros_like(core_capacities, dtype=torch.float) # [B,C]
+    prev_cores = prev_core_allocs[has_prev_core,qubits[has_prev_core,0]] # [B]
+    swap_cost[has_prev_core] = core_connectivity[prev_cores] # [B,C]
+    # For double qubit allocs, compute the cost of allocation of the second
+    double_qubits = (qubits[:,1] != -1) & has_prev_core
+    prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()] # [b]
+    swap_cost[double_qubits] += core_connectivity[prev_cores,:] # [b,C]
 
   def forward(
       self,
@@ -255,29 +310,13 @@ class PredictionModel(torch.nn.Module):
       - [B]: For a batch of size B, a scalar that corresponds to the expected normalized value cost
         of the allocating the input state.
     '''
-    core_embs = self._encode_cores(
-      qubits=qubits,
-      prev_core_allocs=prev_core_allocs,
-      current_core_allocs=current_core_allocs,
-      core_capacities=core_capacities,
-      core_connectivity=core_connectivity,
-    )
-    alloc_ctx_embs = self._encode_circuit_context(
-      circuit_emb=circuit_emb,
-      slice_adj_mat=slice_adj_mat,
-      qubits=qubits,
-    )
-    glimpses, _ = self.mha(
-      query=alloc_ctx_embs,
-      key=core_embs,
-      value=core_embs,
-      need_weights=False,
-    )
-    value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1).squeeze(1))
-    # Attention weights need to be computed by hand as the gradient is not able to flow backwards
-    # through the default MHA implementation. I think this is a but in torch.
-    attn_logits = torch.bmm(glimpses, core_embs.transpose(1,2)).squeeze(1) * self.inv_sqrt_d
-    if self.output_logits_:
-      return attn_logits, value
+    (B,C) = core_capacities.shape
+    (B,Q) = current_core_allocs.shape
+    device = next(self.parameters()).device
+    qubit_matrix = self._get_qs(qubits, C, device)
+    prev_core = self._get_prev_cores_one_hot(prev_core_allocs, C)
+    curr_core = self._get_curr_cores_one_hot(current_core_allocs, C)
+    core_caps = self._get_core_caps(core_capacities, Q, device)
+
     attn_weights = torch.softmax(attn_logits, dim=-1)
     return attn_weights, value
