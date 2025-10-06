@@ -245,7 +245,7 @@ def test_alphazero():
       discount_factor=0.0,
       action_sel_temp=0.0,
       # ucb_c1=0.1,
-      ucb_c1=1,
+      ucb_c1=0.5,
       ucb_c2=10_000,
     )
     try:
@@ -260,10 +260,11 @@ def test_alphazero():
         n_data_augs=16,
         sampler=sampler,
         noise_decrease_factor=0.99,
-        lr=0.001,
+        lr=0.01,
         pol_loss_w=0.9,
         ts_cfg=cfg,
-        print_grad_each=5,
+        print_grad_each=1,
+        detailed_grad=True,
       )
       azero.train(train_cfg, train_device='cuda')
       azero.save("trained/azero", overwrite=False)

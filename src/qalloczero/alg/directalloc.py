@@ -129,15 +129,11 @@ class DirectAllocator:
       pol[~valid_cores] = 0
     # Add exploration noise to the priors
     if cfg.noise != 0:
-      noise = torch.abs(torch.randn([valid_cores.sum()], device=self.device))
-      pol[valid_cores] = (1 - cfg.noise)*pol[valid_cores] + cfg.noise*noise
+      noise = torch.abs(torch.randn(pol.shape, device=self.device))
+      noise[~valid_cores] = 0
+      pol = (1 - cfg.noise)*pol + cfg.noise*noise
     sum_pol = pol.sum()
-    if sum_pol < 1e-5:
-      pol = torch.zeros_like(pol)
-      n_valid_cores = sum(valid_cores)
-      pol[valid_cores] = 1/n_valid_cores
-    else:
-      pol /= sum_pol
+    pol /= sum_pol
     core = pol.argmax().item() if cfg.greedy else torch.distributions.Categorical(pol).sample()
     return core, pol, valid_cores
   
@@ -149,7 +145,8 @@ class DirectAllocator:
     circ_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: DAConfig,
-    ret_train_data: bool
+    ret_train_data: bool,
+    pred_mod: torch.nn.Module,
   ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     core_caps_orig = self.hardware.core_capacities.to(self.device)
     core_allocs = self.hardware.n_cores * torch.ones(
@@ -169,7 +166,7 @@ class DirectAllocator:
         prev_core_allocs = core_allocs
         core_allocs = self.hardware.n_cores * torch.ones_like(core_allocs)
         core_caps = core_caps_orig.clone()
-      pol, _ = self.pred_model(
+      pol, _ = pred_mod(
         qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
         prev_core_allocs=prev_core_allocs.unsqueeze(0),
         current_core_allocs=core_allocs.unsqueeze(0),
@@ -221,6 +218,7 @@ class DirectAllocator:
       alloc_steps=circuit.alloc_steps,
       cfg=cfg,
       ret_train_data=False,
+      pred_mod=self.pred_model,
     )
     cost = sol_cost(allocations=allocations, core_con=self.hardware.core_connectivity)
     return allocations, cost
@@ -320,7 +318,6 @@ class DirectAllocator:
     valid_move_loss = 0
     n_valid_moves = 0
     total_moves = sum([c.n_steps for c in circuits])
-    self.pred_model.output_logits(True)
     for batch_i, circuit in enumerate(circuits):
       print(
         f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Optimizing {batch_i + 1}/{train_cfg.batch_size}",
@@ -334,6 +331,7 @@ class DirectAllocator:
         alloc_steps=circuit.alloc_steps,
         cfg=opt_cfg,
         ret_train_data=True,
+        pred_mod=self.pred_model,
       )
       cost = sol_cost(allocations=allocations, core_con=self.hardware.core_connectivity)
       over_cost = (cost - costs_bl[batch_i]) / (circuit.n_gates_norm + 1)
@@ -347,11 +345,10 @@ class DirectAllocator:
       valid_move_loss += torch.sum(action_probs[~valid_moves])
     valid_move_loss *= train_cfg.invalid_move_penalty
     # loss = cost_loss + valid_move_loss
-    loss = cost_loss
+    loss = cost_loss # TODO remove and set loss as sum
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    self.pred_model.output_logits(False)
     return n_valid_moves/total_moves, cost_loss.item(), valid_move_loss.item()
   
 
@@ -365,7 +362,10 @@ class DirectAllocator:
     self.pred_model.eval()
     da_cfg = DAConfig()
     circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.validation_size)]
+    new_seed = torch.randint(0, 1_000_000, []).item()
+    torch.manual_seed(new_seed)
     cost = [self.optimize(circ, da_cfg)[1] for circ in circuits]
+    torch.manual_seed(new_seed)
     costs_bl = self._get_baseline(circuits, da_cfg, circ_enc_bl, pred_model_bl)
     norm_item = lambda x: x[1]/circuits[x[0]].n_gates_norm
     return list(map(norm_item, enumerate(cost))), list(map(norm_item, enumerate(costs_bl)))

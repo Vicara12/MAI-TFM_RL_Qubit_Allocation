@@ -75,15 +75,15 @@ def test_direct_alloc():
     try:
       train_cfg = DirectAllocator.TrainConfig(
         train_iters=1_000,
-        batch_size=20,
-        validation_size=10,
+        batch_size=50,
+        validation_size=20,
         initial_noise=0.3,
         noise_decrease_factor=0.95,
         sampler=RandomCircuit(num_lq=n_qubits, num_slices=4),
-        lr=1e-4,
+        lr=1e-5,
         invalid_move_penalty=0.3,
         repl_significance=0.05,
-        print_grad_each=10,
+        # print_grad_each=10,
       )
       allocator.train(train_cfg)
       allocator.save("trained/direct_allocator", overwrite=False)

@@ -14,6 +14,7 @@ from qalloczero.scripts.test_directalloc import (
 
 
 if __name__ == "__main__":
+  # import torch; torch.autograd.set_detect_anomaly(True) # TODO remove
   # testing_circuit_enc()
   # testing_pred_model()
   # test_cpp_engine()

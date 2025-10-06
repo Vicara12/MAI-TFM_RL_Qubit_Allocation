@@ -40,9 +40,11 @@ class PredictionModel(torch.nn.Module):
     self.number_encoder = torch.nn.Sequential(
       torch.nn.Linear(1,number_emb_size//2),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(number_emb_size//2),
       torch.nn.Linear(number_emb_size//2, number_emb_size),
       torch.nn.ReLU(),
       torch.nn.Linear(number_emb_size, number_emb_size),
+      torch.nn.LayerNorm(number_emb_size),
     )
 
     # The information of a core includes a one hot vector of the qubits it stored in the previous
@@ -51,22 +53,28 @@ class PredictionModel(torch.nn.Module):
     self.qubit_allocation_joiner = torch.nn.Sequential(
       torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
       torch.nn.ReLU(),
+      torch.nn.BatchNorm2d(2),
       torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
     )
     self.core_encoder = torch.nn.Sequential(
       torch.nn.Linear(n_qubits + 2*number_emb_size, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, n_qubits),
+      torch.nn.LayerNorm(n_qubits),
     )
 
     # Encode circuit context into an embedding vector
     self.context_joiner = torch.nn.Sequential(
       torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
       torch.nn.ReLU(),
+      torch.nn.BatchNorm2d(2),
       torch.nn.Conv2d(in_channels=2, out_channels=2, kernel_size=1),
       torch.nn.ReLU(),
+      torch.nn.BatchNorm2d(2),
       torch.nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1),
     )
     self.context_mha = torch.nn.MultiheadAttention(
@@ -77,8 +85,10 @@ class PredictionModel(torch.nn.Module):
     self.context_ff = torch.nn.Sequential(
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
     )
 
     # We use MHA to mix core information and allocation context information into a glimpse, which is
@@ -92,10 +102,13 @@ class PredictionModel(torch.nn.Module):
     self.value_network = torch.nn.Sequential(
       torch.nn.Linear(2*n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, n_qubits),
       torch.nn.ReLU(),
+      torch.nn.LayerNorm(n_qubits),
       torch.nn.Linear(n_qubits, 1),
     )
 
@@ -189,6 +202,7 @@ class PredictionModel(torch.nn.Module):
     joined_context = self.context_joiner(
       torch.cat([circuit_emb.unsqueeze(1), slice_adj_mat.unsqueeze(1)], dim=1)
     ).squeeze(1)
+
     alloc_ctx_emb, _ = self.context_mha(
       query=qubit_matrix.unsqueeze(1),
       key=joined_context,
@@ -262,7 +276,7 @@ class PredictionModel(torch.nn.Module):
     value = self.value_network(torch.cat([glimpses, alloc_ctx_embs], dim=-1).squeeze(1))
     # Attention weights need to be computed by hand as the gradient is not able to flow backwards
     # through the default MHA implementation. I think this is a but in torch.
-    attn_logits = torch.bmm(alloc_ctx_embs, core_embs.transpose(1,2)).squeeze(1) * self.inv_sqrt_d
+    attn_logits = torch.bmm(glimpses, core_embs.transpose(1,2)).squeeze(1) * self.inv_sqrt_d
     if self.output_logits_:
       return attn_logits, value
     attn_weights = torch.softmax(attn_logits, dim=-1)

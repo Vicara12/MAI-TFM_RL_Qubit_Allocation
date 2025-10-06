@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware
-from utils.gradient_tools import print_grad
+from utils.gradient_tools import print_grad_stats, print_grad
 from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
 from qalloczero.alg.ts import TSConfig, TSTrainData, ModelConfigs
@@ -37,6 +37,7 @@ class AlphaZero:
     pol_loss_w: float
     ts_cfg: TSConfig
     print_grad_each: Optional[int] = None
+    detailed_grad: bool = False
 
 
   def __init__(
@@ -312,10 +313,14 @@ class AlphaZero:
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
-          print(f"\n[+] Gradient information for prediction model:")
-          print_grad(self.pred_model)
-          print(f"\n[+] Gradient information for circuit encoder:")
-          print_grad(self.circ_enc)
+          if train_cfg.detailed_grad:
+            print(f"\n[+] Gradient information for prediction model:")
+            print_grad(self.pred_model)
+            print(f"\n[+] Gradient information for circuit encoder:")
+            print_grad(self.circ_enc)
+          else:
+            print_grad_stats(self.pred_model, 'prediction model')
+            print_grad_stats(self.circ_enc, 'circuit encoder')
           self.pgrad_counter = 1
         else:
           self.pgrad_counter += 1
