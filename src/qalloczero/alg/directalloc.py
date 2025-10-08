@@ -37,7 +37,6 @@ class DirectAllocator:
     sampler: CircuitSampler
     lr: float
     invalid_move_penalty: float
-    repl_significance: float
     print_grad_each: Optional[int] = None
 
 
@@ -146,7 +145,6 @@ class DirectAllocator:
     alloc_steps: torch.Tensor,
     cfg: DAConfig,
     ret_train_data: bool,
-    pred_mod: torch.nn.Module,
   ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     core_caps_orig = self.hardware.core_capacities.to(self.device)
     core_allocs = self.hardware.n_cores * torch.ones(
@@ -166,7 +164,7 @@ class DirectAllocator:
         prev_core_allocs = core_allocs
         core_allocs = self.hardware.n_cores * torch.ones_like(core_allocs)
         core_caps = core_caps_orig.clone()
-      pol, _ = pred_mod(
+      pol, _ = self.pred_model(
         qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
         prev_core_allocs=prev_core_allocs.unsqueeze(0),
         current_core_allocs=core_allocs.unsqueeze(0),
@@ -218,7 +216,6 @@ class DirectAllocator:
       alloc_steps=circuit.alloc_steps,
       cfg=cfg,
       ret_train_data=False,
-      pred_mod=self.pred_model,
     )
     cost = sol_cost(allocations=allocations, core_con=self.hardware.core_connectivity)
     return allocations, cost
@@ -233,7 +230,6 @@ class DirectAllocator:
     optimizer = torch.optim.Adam(
       chain(self.circ_enc.parameters(), self.pred_model.parameters()), lr=train_cfg.lr
     )
-    circ_enc_bl, pred_model_bl = self._clone_models()
     opt_cfg = DAConfig(
       noise=train_cfg.initial_noise,
       mask_invalid=False,
@@ -246,8 +242,6 @@ class DirectAllocator:
         self.iter_timer.start()
         frac_valid_moves, cost_loss, vm_loss = self._train_batch(
           iter=iter,
-          circ_enc_bl=circ_enc_bl,
-          pred_model_bl=pred_model_bl,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
           train_cfg=train_cfg,
@@ -256,30 +250,14 @@ class DirectAllocator:
 
         print(f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Running validation...", end='')
         with torch.no_grad():
-          cost, cost_bl = self._validation(
-            circ_enc_bl=circ_enc_bl,
-            pred_model_bl=pred_model_bl,
-            train_cfg=train_cfg,
-          )
-
-        if cost == cost_bl:
-          p_value = 0.5
-        else:
-          _, p_value = stats.ttest_rel(cost, cost_bl, alternative='less')
-        replace = p_value < train_cfg.repl_significance
-        if replace:
-          circ_enc_bl, pred_model_bl = self._clone_models()
+          avg_cost = self._validation(train_cfg=train_cfg)
 
         self.iter_timer.stop()
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)
-        avg = lambda l: sum(l)/len(l)
         print((
           f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] "
           f"loss={cost_loss + vm_loss:.3f} (c={cost_loss:.3f},vm={vm_loss:.3f}) \t"
-          f"vm={frac_valid_moves:.3f} "
-          f"cost={avg(cost):.3f} cost_bl={avg(cost_bl):.3f} pv={p_value:.2f} "
-          f"{'REPLACED' if replace else '        '} "
-          f"t={self.iter_timer.time:.2f}s "
+          f"vm={frac_valid_moves:.3f} val_cost={avg_cost:.3f} t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
@@ -300,97 +278,70 @@ class DirectAllocator:
   def _train_batch(
     self,
     iter: int,
-    circ_enc_bl: torch.nn.Module,
-    pred_model_bl: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
   ) -> float:
     self.circ_enc.train()
     self.pred_model.train()
-    circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
-    print(f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Obtaining baselines...", end='')
-    with torch.no_grad():
-      costs_bl = self._get_baseline(circuits, opt_cfg, circ_enc_bl, pred_model_bl)
-    adj_mats = torch.stack([c.adj_matrices.to(self.device) for c in circuits], dim=0)
-    circ_embs = self.circ_enc(adj_mats)
     cost_loss = 0
     valid_move_loss = 0
-    n_valid_moves = 0
-    total_moves = sum([c.n_steps for c in circuits])
-    for batch_i, circuit in enumerate(circuits):
+    circuit = train_cfg.sampler.sample()
+    adj_mat = circuit.adj_matrices.unsqueeze(0).to(self.device)
+    circ_embs = self.circ_enc(adj_mat)
+    all_costs = []
+    action_probs = []
+    valid_moves = []
+
+    for batch_i in range(train_cfg.batch_size):
       print(
         f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Optimizing {batch_i + 1}/{train_cfg.batch_size}",
         end=''
       )
-      allocations = torch.empty([circuits[0].n_slices, circuits[0].n_qubits], dtype=torch.int)
+      allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
       actions, probs, valid_cores = self._allocate(
         allocations=allocations,
-        adj_mats=adj_mats[batch_i].unsqueeze(0),
-        circ_embs=circ_embs[batch_i].unsqueeze(0),
+        adj_mats=adj_mat,
+        circ_embs=circ_embs,
         alloc_steps=circuit.alloc_steps,
         cfg=opt_cfg,
         ret_train_data=True,
-        pred_mod=self.pred_model,
       )
       cost = sol_cost(allocations=allocations, core_con=self.hardware.core_connectivity)
-      # TODO normalize over_cost!!!
-      over_cost = (cost - costs_bl[batch_i]) / (circuit.n_gates_norm + 1)
-      valid_moves = valid_cores[torch.arange(valid_cores.shape[0]), actions]
-      n_valid_moves += torch.sum(valid_moves).item()
-      action_probs = probs[torch.arange(probs.shape[0]), actions]
+      all_costs.append(cost/(circuit.n_gates_norm + 1))
+      valid_moves.append(valid_cores[torch.arange(valid_cores.shape[0]), actions])
+      action_probs.append(probs[torch.arange(probs.shape[0]), actions])
+
+    all_costs = torch.tensor(all_costs)
+    all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
+    all_costs = all_costs.tolist()
+
+    for (cost, action_prob, valid_move) in zip(all_costs, action_probs, valid_moves):
       # This loss tries to maximize the probability of actions that resulted in reduced cost wrt the
       # baseline and minimize those that resulted in worse cost wrt to the baseline
-      cost_loss += over_cost * torch.sum(action_probs[valid_moves])
+      cost_loss += cost * torch.sum(action_prob[valid_move])
       # This loss tries to maximize the number of valid moves (vm) the network does
-      valid_move_loss += torch.sum(action_probs[~valid_moves])
+      valid_move_loss += torch.sum(action_prob[~valid_move])
+
     valid_move_loss *= train_cfg.invalid_move_penalty
     # loss = cost_loss + valid_move_loss
     loss = cost_loss # TODO remove and set loss as sum
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+
+    n_valid_moves = sum(torch.sum(vm).item() for vm in valid_moves)
+    total_moves = circuit.n_steps*train_cfg.batch_size
     return n_valid_moves/total_moves, cost_loss.item(), valid_move_loss.item()
   
 
-  def _validation(
-    self,
-    circ_enc_bl: torch.nn.Module,
-    pred_model_bl: torch.nn.Module,
-    train_cfg: TrainConfig,
-  ) -> Tuple[List[float], List[float]]:
+  def _validation(self, train_cfg: TrainConfig,) -> float:
     self.circ_enc.eval()
     self.pred_model.eval()
     da_cfg = DAConfig()
-    circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.validation_size)]
-    new_seed = torch.randint(0, 1_000_000, []).item()
-    torch.manual_seed(new_seed)
-    cost = [self.optimize(circ, da_cfg)[1] for circ in circuits]
-    torch.manual_seed(new_seed)
-    costs_bl = self._get_baseline(circuits, da_cfg, circ_enc_bl, pred_model_bl)
-    norm_item = lambda x: x[1]/circuits[x[0]].n_gates_norm
-    return list(map(norm_item, enumerate(cost))), list(map(norm_item, enumerate(costs_bl)))
-
-
-  def _get_baseline(
-    self,
-    circuits: List[Circuit],
-    cfg: DAConfig,
-    circ_enc_bl: torch.nn.Module,
-    pred_model_bl: torch.nn.Module,
-  ) -> List[float]:
-    # Get baseline cost by swapping baseline and train models
-    self.circ_enc, circ_enc_bl = circ_enc_bl, self.circ_enc
-    self.pred_model, pred_model_bl = pred_model_bl, self.pred_model
-    cost_bl = [self.optimize(circ, cfg)[1] for circ in circuits]
-    self.circ_enc, circ_enc_bl = circ_enc_bl, self.circ_enc
-    self.pred_model, pred_model_bl = pred_model_bl, self.pred_model
-    return cost_bl
-  
-
-  def _clone_models(self) -> Tuple[torch.nn.Module, torch.nn.Module]:
-    circ_enc = deepcopy(self.circ_enc)
-    pred_model = deepcopy(self.pred_model)
-    circ_enc.eval()
-    pred_model.eval()
-    return circ_enc, pred_model
+    norm_costs = []
+    for _ in range(train_cfg.validation_size):
+      circ = train_cfg.sampler.sample()
+      cost = self.optimize(circ, da_cfg)[1]/(circ.n_gates_norm + 1)
+      norm_costs.append(cost)
+    return sum(norm_costs)/len(norm_costs)
