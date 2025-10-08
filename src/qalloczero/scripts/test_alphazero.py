@@ -258,15 +258,15 @@ def test_alphazero():
       sampler = RandomCircuit(num_lq=n_qubits, num_slices=8)
       train_cfg = AlphaZero.TrainConfig(
         train_iters=2_000,
-        batch_size=4,
-        n_data_augs=16,
+        batch_size=8,
+        n_data_augs=1,
         sampler=sampler,
         noise_decrease_factor=0.99,
-        lr=0.01,
-        pol_loss_w=0.9,
+        lr=0.1,
+        pol_loss_w=1,
         ts_cfg=cfg,
-        print_grad_each=1,
-        detailed_grad=True,
+        print_grad_each=5,
+        detailed_grad=False,
       )
       azero.train(train_cfg, train_device='cuda')
       azero.save("trained/azero", overwrite=False)

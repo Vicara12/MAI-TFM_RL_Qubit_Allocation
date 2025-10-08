@@ -180,7 +180,7 @@ class PredictionModel(torch.nn.Module):
     input_size = inputs.shape[-1]
     ix_per_core = idx.unsqueeze(-1).expand(-1,C)
     idx_expanded = ix_per_core.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, input_size) # [B, C, 1, 7]
-    result = torch.gather(inputs, dim=2, index=idx_expanded)  # [B, C, 1, 7]
+    result = torch.gather(inputs, dim=2, index=idx_expanded.type(torch.long))  # [B, C, 1, 7]
     return result.squeeze(2)  # [B, C, 7]
 
 
@@ -263,7 +263,7 @@ class PredictionModel(torch.nn.Module):
     key_embs, q0_embs, q1_embs = self._get_embeddings(inputs, qubits)
     projs = self._project(key_embs, q0_embs, q1_embs) # [B,C,Q]
     logits = projs.max(dim=-1)[0] # [B,C]
-    vals = torch.tensor([[1] for _ in range(qubits.shape[0])]) # This is a placeholder
+    vals = torch.tensor([[1] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     if self.output_logits_:
       return logits, vals
     probs = torch.softmax(logits, dim=-1) # [B,C]

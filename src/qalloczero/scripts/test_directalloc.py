@@ -29,7 +29,7 @@ def test_direct_alloc():
   # allocator = DirectAllocator.load("trained/direct_allocator_v2", device="cuda")
   allocator = DirectAllocator(
     hardware,
-    device='cpu',
+    device='cuda',
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = DAConfig(
@@ -83,7 +83,7 @@ def test_direct_alloc():
         lr=1e-3,
         invalid_move_penalty=0.3,
         repl_significance=0.05,
-        print_grad_each=1,
+        # print_grad_each=1,
       )
       allocator.train(train_cfg)
       allocator.save("trained/direct_allocator", overwrite=False)
