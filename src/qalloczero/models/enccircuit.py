@@ -22,7 +22,7 @@ class CircuitEncoder(torch.nn.Module):
       - [B, N, Q, Q]: a circuit embedding of size [Q, Q] for each of the N times slices per circuit
         for all circuits in the batch of size B.
     '''
-    circuit_embs = torch.empty_like(adjacency_matrices)
+    circuit_embs = torch.empty_like(adjacency_matrices, dtype=torch.float)
     circuit_embs[:,-1] = 0.5 * adjacency_matrices[:,-1]
     n_slices = adjacency_matrices.shape[1]
     for slice_i in range(n_slices-2,-1,-1):

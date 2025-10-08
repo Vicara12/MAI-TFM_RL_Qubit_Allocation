@@ -334,6 +334,7 @@ class DirectAllocator:
         pred_mod=self.pred_model,
       )
       cost = sol_cost(allocations=allocations, core_con=self.hardware.core_connectivity)
+      # TODO normalize over_cost!!!
       over_cost = (cost - costs_bl[batch_i]) / (circuit.n_gates_norm + 1)
       valid_moves = valid_cores[torch.arange(valid_cores.shape[0]), actions]
       n_valid_moves += torch.sum(valid_moves).item()

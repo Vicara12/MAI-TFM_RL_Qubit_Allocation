@@ -28,10 +28,10 @@ def testing_pred_model():
     [1,0],
   ], dtype=torch.float)
   pred_model = PredictionModel(
-    n_qubits=4,
-    n_cores=2,
-    number_emb_size=4,
-    n_heads=4,
+    # n_qubits=4,
+    # n_cores=2,
+    # number_emb_size=4,
+    # n_heads=4,
   )
   pred_model.eval()
   qubits = torch.tensor([
@@ -69,6 +69,8 @@ def testing_pred_model():
      [0,0,0,1],
      [0,0,1,0]],
   ])
+  circ_enc = CircuitEncoder(n_qubits=4, n_heads=0, n_layers=0)
+  circuit_emb = circ_enc(slice_adj_mat.unsqueeze(0))[0]
   
   probs_batched, vals_batched = pred_model(
     qubits=qubits,
