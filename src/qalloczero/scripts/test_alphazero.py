@@ -157,11 +157,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -182,28 +182,27 @@ def test_alphazero():
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
-    target_tree_size=128,
+    target_tree_size=1028,
     noise=0.00,
     dirichlet_alpha=0.7,
-    discount_factor=0.5,
+    discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.1,
+    ucb_c1=0.025,
     ucb_c2=500,
   )
 
   if test_run:
     cfg = TSConfig(
-      target_tree_size=256,
-      noise=0.00,
-      dirichlet_alpha=0.7,
+      target_tree_size=2048,
+      noise=0.70,
+      dirichlet_alpha=0.0,
       discount_factor=0.0,
-      action_sel_temp=0.0,
-      # ucb_c1=0.1,
-      ucb_c1=0.1,
+      action_sel_temp=0,
+      ucb_c1=0.05,
       ucb_c2=500,
     )
     # azero.save("checkpoint", overwrite=True)
-    azero = AlphaZero.load("trained/azero_curriculum", device="cpu")
+    azero = AlphaZero.load("trained/direct_allocator", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):

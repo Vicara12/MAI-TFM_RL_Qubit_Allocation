@@ -78,14 +78,15 @@ def grid_search():
 def linear_search():
   torch.manual_seed(42)
   ts_cfg_params = dict(
-    target_tree_size = [4, 8, 16, 32, 64 ,128, 256],
+    # target_tree_size = [4, 8, 16, 32, 64 ,128, 256, 512, 1024, 2048],
+    target_tree_size = [1024, 2048, 4096, 8192],
     noise=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
     dirichlet_alpha=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
     discount_factor=[0, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
     action_sel_temp=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
     # ucb_c1=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3, 3.5],
     # ucb_c2=[50, 500, 1_000, 5_000, 10_000, 15_000, 19_652, 20_000, 25_000, 30_000, 40_000],
-    ucb_c1=[0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25],
+    ucb_c1=[0.00001, 0.001, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25],
     ucb_c2=[500, 1_000, 5_000, 10_000, 15_000, 19_652, 20_000, 25_000, 30_000, 40_000],
   )
 
@@ -98,32 +99,35 @@ def linear_search():
     core_capacities=core_caps,
     core_connectivity=torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   )
-  azero = AlphaZero(
-    hardware,
-    device='cpu',
-    backend=AlphaZero.Backend.Cpp,
-  )
+  # azero = AlphaZero(
+  #   hardware,
+  #   device='cpu',
+  #   backend=AlphaZero.Backend.Cpp,
+  # )
+  azero = AlphaZero.load("trained/direct_allocator", device="cpu")
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuits = [sampler.sample() for i in range(n_circuits)]
-  best_params = dict(
-    target_tree_size=64,
-    noise=0.00,
+  cfg_params = dict(
+    target_tree_size=512,
+    noise=0.70,
     dirichlet_alpha=0.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.025,
-    # ucb_c2=500,
+    ucb_c1=0.05,
+    ucb_c2=500,
   )
+  ignore_params = ['target_tree_size', 'action_sel_temp']
   results = dict()
 
   for (param, values) in ts_cfg_params.items():
-    if param in best_params.keys():
-      print(f"[*] Ignoring {param}, as it is in best_params\n")
+    if param in ignore_params:
+      print(f"[*] Ignoring {param}, as it is in ignore_params\n")
       continue
-    print(f"[*] Testing for {param} with values cfg: {best_params}")
+    print(f"[*] Testing for {param} with values cfg: {cfg_params}")
     results_param = {}
     for value in values:
-      cfg = TSConfig(**(best_params | {param:value}))
+      cfg_params[param] = value
+      cfg = TSConfig(**cfg_params)
       with Timer.get('t'):
         exec_res = azero.optimize_mult(circuits, cfg)
       get_mean = lambda idx: torch.mean(torch.tensor([float(res[idx]) for res in exec_res])).item()
@@ -135,10 +139,7 @@ def linear_search():
     best = min(results_param.items(), key=lambda x: x[1][0])
     print(f" + Using best: {best[0]}")
     results[param] = results_param
-    if param not in best_params.keys():
-      best_params[param] = best[0]
-    else:
-      print(f" + Ignoring best in future search")
+    cfg_params[param] = best[0]
     print()
   print(results)
     

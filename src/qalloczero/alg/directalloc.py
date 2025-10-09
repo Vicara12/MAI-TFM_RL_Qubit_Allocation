@@ -1,16 +1,14 @@
 import os
 import json
-from scipy import stats
 import torch
-from copy import deepcopy
 import warnings
 from itertools import chain
-from typing import Self, Tuple, List, Optional
+from typing import Self, Tuple, Optional
 from dataclasses import dataclass
 from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost
 from utils.timer import Timer
-from utils.gradient_tools import print_grad
+from utils.gradient_tools import print_grad, print_grad_stats
 from sampler.circuitsampler import CircuitSampler
 from qalloczero.alg.ts import ModelConfigs
 from qalloczero.models.enccircuit import CircuitEncoder
@@ -38,6 +36,7 @@ class DirectAllocator:
     lr: float
     invalid_move_penalty: float
     print_grad_each: Optional[int] = None
+    detailed_grad: bool = False
 
 
   def __init__(
@@ -261,10 +260,14 @@ class DirectAllocator:
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
-          print(f"\n[+] Gradient information for prediction model:")
-          print_grad(self.pred_model)
-          print(f"\n[+] Gradient information for circuit encoder:")
-          print_grad(self.circ_enc)
+          if train_cfg.detailed_grad:
+            print(f"\n[+] Gradient information for prediction model:")
+            print_grad(self.pred_model)
+            print(f"\n[+] Gradient information for circuit encoder:")
+            print_grad(self.circ_enc)
+          else:
+            print_grad_stats(self.pred_model, 'prediction model')
+            print_grad_stats(self.circ_enc, 'circuit encoder')
           self.pgrad_counter = 1
         else:
           self.pgrad_counter += 1
@@ -324,10 +327,11 @@ class DirectAllocator:
       valid_move_loss += torch.sum(action_prob[~valid_move])
 
     valid_move_loss *= train_cfg.invalid_move_penalty
-    # loss = cost_loss + valid_move_loss
-    loss = cost_loss # TODO remove and set loss as sum
+    loss = cost_loss + valid_move_loss
+    # loss = cost_loss # TODO remove and set loss as sum
     optimizer.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
     optimizer.step()
 
     n_valid_moves = sum(torch.sum(vm).item() for vm in valid_moves)

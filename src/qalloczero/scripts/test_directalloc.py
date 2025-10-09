@@ -9,11 +9,11 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 
 
 def test_direct_alloc():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -26,11 +26,11 @@ def test_direct_alloc():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  # allocator = DirectAllocator.load("trained/direct_allocator_v2", device="cuda")
-  allocator = DirectAllocator(
-    hardware,
-    device='cuda',
-  )
+  allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
+  # allocator = DirectAllocator(
+  #   hardware,
+  #   device='cuda',
+  # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = DAConfig(
     noise=0.0,
@@ -74,15 +74,16 @@ def test_direct_alloc():
   if test_train:
     try:
       train_cfg = DirectAllocator.TrainConfig(
-        train_iters=1_000,
-        batch_size=50,
+        train_iters=10_000,
+        batch_size=20,
         validation_size=20,
         initial_noise=0.3,
         noise_decrease_factor=0.95,
-        sampler=RandomCircuit(num_lq=n_qubits, num_slices=4),
-        lr=1e-3,
+        sampler=RandomCircuit(num_lq=n_qubits, num_slices=8),
+        lr=1e-4,
         invalid_move_penalty=0.3,
-        print_grad_each=1,
+        # print_grad_each=5,
+        # detailed_grad=False,
       )
       allocator.train(train_cfg)
       allocator.save("trained/direct_allocator", overwrite=False)

@@ -44,6 +44,12 @@ class Circuit:
     if not hasattr(self, "adj_matrices_"):
       self.adj_matrices_ = self._get_adj_matrices()
     return self.adj_matrices_
+  
+  @property
+  def embedding(self) -> torch.Tensor:
+    if not hasattr(self, 'embedding_'):
+      self.embedding_ = self._get_embedding()
+    return self.embedding_
 
 
   def _get_adj_matrices(self) -> torch.Tensor:
@@ -53,8 +59,16 @@ class Circuit:
         matrices[s_i,a,b] = matrices[s_i,b,a] = 1
         matrices[s_i,a,a] = matrices[s_i,b,b] = 0
     return matrices
+  
+  def _get_embedding(self) -> torch.Tensor:
+    adj = self.adj_matrices
+    embeddings = torch.empty_like(adj, dtype=torch.float)
+    embeddings[-1] = 0.5 * adj[-1]
+    for slice_i in range(self.n_slices-2,-1,-1):
+      embeddings[slice_i] = 0.5 * (embeddings[slice_i + 1] + adj[slice_i])
+    return embeddings
 
-  def _get_alloc_order(self) -> torch.Tensor:
+  def _get_alloc_order(self, order=True) -> torch.Tensor:
     ''' Get the allocation order of te qubits for a given circuit.
 
     Returns a tensor with the allocations to be performed. Each row contains 4
@@ -67,9 +81,14 @@ class Circuit:
     n_steps = self.n_slices*self.n_qubits - self.n_gates
     allocations = torch.empty([n_steps, 4], dtype=torch.int32)
     alloc_step = 0
+    embs = self.embedding
     for slice_i, slice in enumerate(self.slice_gates):
       free_qubits = set(range(self.n_qubits))
-      for gate in slice:
+      # Order gates by interaction intensity of the two qubits in the gate
+      ordered_gates = [(embs[slice_i,g0,g1], (g0,g1)) for (g0,g1) in slice]
+      if order:
+        ordered_gates.sort(reverse=True)
+      for _, gate in ordered_gates:
         allocations[alloc_step,0] = slice_i
         allocations[alloc_step,1] = gate[0]
         allocations[alloc_step,2] = gate[1]
@@ -77,6 +96,10 @@ class Circuit:
         gate_counter += 1 if slice_i != 0 else 0
         free_qubits -= set(gate) # Remove qubits in gates from set of free qubits
         alloc_step += 1
+      # Order free qubits by highest interaction intensity (ignoring itself)
+      ordered_fq = [(embs[slice_i,q,torch.arange(self.n_qubits) != q], (q,)) for q in free_qubits]
+      if order:
+        ordered_fq.sort(reverse=True)
       for q in free_qubits:
         allocations[alloc_step,0] = slice_i
         allocations[alloc_step,1] = q

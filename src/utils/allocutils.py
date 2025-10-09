@@ -1,6 +1,8 @@
 import torch
+import bisect
+import set
 from copy import copy
-from typing import Tuple, Optional
+from typing import Tuple, List
 from utils.customtypes import Hardware, Circuit
 
 

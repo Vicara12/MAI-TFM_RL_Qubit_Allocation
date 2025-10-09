@@ -27,6 +27,8 @@ def grad_stats(model):
   for name, param in model.named_parameters():
     if param.grad is not None:
       max_grads[name] = param.grad.abs().max().item()
+  if not max_grads:
+    return 0, 0, 0
   vals = torch.tensor(list(max_grads.values()))
   mean_grad = vals.mean().item()
   max_grad = max(max_grads.items(), key=lambda x: x[1])
