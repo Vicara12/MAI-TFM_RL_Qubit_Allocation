@@ -2,7 +2,7 @@ import torch
 from utils.timer import Timer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
-from utils.allocutils import check_sanity
+from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
 from sampler.randomcircuit import RandomCircuit
 from qalloczero.alg.ts import ModelConfigs
 from qalloczero.alg.directalloc import DirectAllocator, DAConfig
@@ -43,7 +43,10 @@ def test_direct_alloc():
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, = allocator.optimize(circuit, cfg=cfg)
-    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f}\n{allocs}")
+    swaps = swaps_from_alloc(allocs, n_cores)
+    n_swaps = count_swaps(swaps)
+    check_sanity_swap(allocs, swaps)
+    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f} sw={n_swaps} ({n_swaps/circuit.n_gates_norm:.3f})\n{allocs}")
     check_sanity(allocs, circuit, hardware)
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
   

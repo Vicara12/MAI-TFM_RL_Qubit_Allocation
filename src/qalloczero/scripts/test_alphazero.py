@@ -2,7 +2,7 @@ import torch
 from utils.timer import Timer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
-from utils.allocutils import sol_cost, check_sanity
+from utils.allocutils import sol_cost, check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
 from sampler.randomcircuit import RandomCircuit
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.ts_python import TSPythonEngine
@@ -157,11 +157,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -183,7 +183,7 @@ def test_alphazero():
   # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
-    target_tree_size=1028,
+    target_tree_size=1024,
     noise=0.00,
     dirichlet_alpha=0.7,
     discount_factor=0.0,
@@ -207,7 +207,10 @@ def test_alphazero():
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, _, er = azero.optimize(circuit, cfg, verbose=True)
-    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f} er={er:.3f}")
+    swaps = swaps_from_alloc(allocs, n_cores)
+    n_swaps = count_swaps(swaps)
+    check_sanity_swap(allocs, swaps)
+    print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f} er={er:.3f} sw={n_swaps} ({n_swaps/circuit.n_gates_norm:.3f})")
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
     # torch.manual_seed(42)
     # with Timer.get('t'):

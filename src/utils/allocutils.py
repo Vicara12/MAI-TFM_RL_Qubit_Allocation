@@ -1,6 +1,4 @@
 import torch
-import bisect
-import set
 from copy import copy
 from typing import Tuple, List
 from utils.customtypes import Hardware, Circuit
@@ -81,3 +79,60 @@ def core_allocs_to_qubit_allocs(allocations: torch.Tensor,
       physical_qubit_allocations[t_slice_i, lq_i] = first_free_pq_in_core[physical_core]
       first_free_pq_in_core[physical_core] += 1
   return physical_qubit_allocations
+
+
+def swaps_from_alloc(allocations: torch.Tensor, n_cores: int) -> List[List[Tuple[int,int]]]:
+  swaps = []
+  for (prev_slice, next_slice) in zip(allocations[:-1], allocations[1:]):
+    # Extract inter-core communications as edges of a graph
+    adj_list = [[] for _ in range(n_cores)]
+    core_count = [0]*n_cores
+    for (q, (prev_core, next_core)) in enumerate(zip(prev_slice, next_slice)):
+      if prev_core != next_core:
+        core_count[prev_core] -= 1
+        core_count[next_core] += 1
+        com = (q, (prev_core, next_core))
+        adj_list[prev_core].append(com)
+    
+    # Beware this might give a false positive if #logical qubits < #physical qubits
+    assert all([cc == 0 for cc in core_count]), f"Some core is not balanced: {core_count}"
+
+    is_cycle = lambda path: (path[0][1][0] == path[-1][1][1])
+    cycle_to_swaps = lambda path: [(q0, q1) for ((q0, _), (q1, _)) in zip(path[:-1],path[1:])]
+    paths_intersect = lambda p0, p1: bool(set(p0).intersection(set(p1)))
+
+    # Find all cycles in the directed graph in ascending order by length
+    swaps_slice = []
+    paths = [(com,) for con_from_core in adj_list for com in con_from_core]
+    while paths:
+      path = paths.pop(0)
+      # If path is a cycle, remove all paths that share edges with this one
+      if is_cycle(path):
+        swaps_slice += cycle_to_swaps(path)
+        paths = list(filter(lambda p: (not paths_intersect(path, p)), paths))
+        # Remove all edges in the cycle form the adj_list
+        for com in path:
+          l = adj_list[com[1][0]]
+          del l[l.index(com)]
+      # If it's not a cycle add all possible paths that follow by adding edges
+      else:
+        final_core = path[-1][1][1]
+        for com in adj_list[final_core]:
+          paths.append(path + (com,))
+    swaps.append(swaps_slice)
+  return swaps
+
+
+def count_swaps(swaps: List[List[Tuple[int,int]]]) -> int:
+  return sum(len(l) for l in swaps)
+
+
+def check_sanity_swap(allocations: torch.Tensor, swaps: List[List[Tuple[int,int]]]):
+  for slice_i, (prev_slice, next_slice) in enumerate(zip(allocations[:-1], allocations[1:])):
+    qubit_cores = prev_slice.clone()
+    for (q0, q1) in swaps[slice_i]:
+      qubit_cores[[q0,q1]] = qubit_cores[[q1,q0]]
+    assert torch.equal(qubit_cores, next_slice), (
+      f"Target and result do not coincide after swapping for slices {slice_i} - {slice_i + 1}: "
+      f"{qubit_cores.tolist()} vs target {next_slice.tolist()}"
+    )
