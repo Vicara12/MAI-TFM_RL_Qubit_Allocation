@@ -2,6 +2,7 @@ import torch
 from utils.timer import Timer
 from utils.customtypes import Hardware
 from sampler.randomcircuit import RandomCircuit
+from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.directalloc import DirectAllocator
@@ -53,4 +54,7 @@ def validate():
       else:
         raise Exception("Unrecognized algorithm type")
     norm_res = [res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)]
-    print(f" + t={Timer.get('t').time:.2f}s avg_cost={sum(norm_res)/len(norm_res):.4f}")
+    norm_swaps = [
+      count_swaps(swaps_from_alloc(res[0]))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
+    ]
+    print(f" + t={Timer.get('t').time:.2f}s avg_cost={sum(norm_res)/len(norm_res):.4f} avg_swaps={sum(norm_swaps)/len(norm_swaps):.4f}")

@@ -42,7 +42,7 @@ def test_direct_alloc():
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, = allocator.optimize(circuit, cfg=cfg)
+      allocs, cost, = allocator.optimize(circuit, hardware=hardware, cfg=cfg)
     swaps = swaps_from_alloc(allocs, n_cores)
     n_swaps = count_swaps(swaps)
     check_sanity_swap(allocs, swaps)
@@ -75,9 +75,14 @@ def test_direct_alloc():
     print(f"Final t={Timer.get('t').time:.2f}s")
   
   if test_train:
+    allocator = DirectAllocator(
+      hardware,
+      device='cuda',
+      model_cfg=ModelConfigs(layers=[8,16,32,32,64,64]),
+    )
     try:
       train_cfg = DirectAllocator.TrainConfig(
-        train_iters=10_000,
+        train_iters=1_000,
         batch_size=100,
         validation_size=20,
         initial_noise=0.3,

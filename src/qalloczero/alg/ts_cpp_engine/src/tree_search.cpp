@@ -147,7 +147,7 @@ auto TreeSearch::optimize(
     int qubit1 = ctx.alloc_steps_[ctx.root_->alloc_step][2].item<int>();
 
     if (verbose)
-      std::cout << " - Optimization step " << (step+1) << "/" << ctx.n_steps_ << std::endl;
+      std::cout << "\033[2K\r - Optimization step " << (step+1) << "/" << ctx.n_steps_ << std::endl;
 
     if (ret_train_data)
       store_train_data(ctx, *tdata, step, slice_idx, qubit0, qubit1);

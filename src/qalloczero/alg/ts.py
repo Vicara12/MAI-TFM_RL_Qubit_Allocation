@@ -1,6 +1,6 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import torch
 
 
@@ -29,7 +29,7 @@ class TSTrainData:
 
 @dataclass
 class ModelConfigs:
-    layers = [16, 32, 64]
+    layers: List[int] = field(default_factory=lambda: [16, 32, 64])
 
 
 class TSEngine(ABC):

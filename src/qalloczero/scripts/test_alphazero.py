@@ -157,11 +157,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -175,7 +175,7 @@ def test_alphazero():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  azero = AlphaZero.load("trained/direct_allocator", device="cpu")
+  # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
   # azero = AlphaZero(
   #   hardware,
   #   device='cpu',
@@ -251,6 +251,7 @@ def test_alphazero():
       ucb_c1=0.05,
       ucb_c2=500,
     )
+    azero = AlphaZero.load("trained/direct_allocator_v2", device="cpu")
     try:
       sampler = RandomCircuit(num_lq=n_qubits, num_slices=4)
       train_cfg = AlphaZero.TrainConfig(

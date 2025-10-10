@@ -49,6 +49,7 @@ class AlphaZero:
   ):
     self.default_hw = default_hardware
     self.device = device
+    self.model_cfg = model_cfg
     self.backend = backend.value(
       device=device,
     )
@@ -61,7 +62,8 @@ class AlphaZero:
     params = dict(
       core_caps=self.default_hw.core_capacities.tolist(),
       core_conns=self.default_hw.core_connectivity.tolist(),
-      backend=self.backend.__class__.__name__
+      backend=self.backend.__class__.__name__,
+      layers=self.model_cfg.layers,
     )
     if os.path.isdir(path):
       warnings.warn(f"provided folder \"{path}\" already exists")
@@ -91,8 +93,9 @@ class AlphaZero:
     if 'backend' not in params.keys():
       params["backend"] = 'TSCppEngine'
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
+    model_cfg = ModelConfigs(layers=params['layers'])
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
-    loaded = AlphaZero(default_hardware=hardware, device=device, backend=backend)
+    loaded = AlphaZero(default_hardware=hardware, device=device, backend=backend, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
       torch.load(
         os.path.join(path, "pred_mod.pt"),
