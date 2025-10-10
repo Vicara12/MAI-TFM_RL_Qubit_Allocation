@@ -29,10 +29,7 @@ class TSTrainData:
 
 @dataclass
 class ModelConfigs:
-    ce_nheads: int = 4
-    ce_nlayers: int = 4
-    pm_nemb_sz: int = 4
-    pm_nheads: int = 4
+    layers = [16, 32, 64]
 
 
 class TSEngine(ABC):
@@ -57,9 +54,9 @@ class TSEngine(ABC):
     @abstractmethod
     def optimize(
       self,
+      n_qubits: int,
       core_conns: torch.Tensor,
       core_caps: torch.Tensor,
-      slice_adjm: torch.Tensor,
       circuit_embs: torch.Tensor,
       alloc_steps: torch.Tensor,
       cfg: TSConfig,

@@ -34,8 +34,6 @@ public:
   };
 
   TreeSearch(
-    int n_qubits,
-    int n_cores,
     at::Device device
   );
 
@@ -52,9 +50,9 @@ public:
    * @return Tuple with the allocation tensor of shape [n_qubits, n_slices] and the total number of expanded nodes, exploration ratio and optionally data for training.
    */
   auto optimize(
+    int n_qubits,
     const at::Tensor& core_conns,
     const at::Tensor& core_caps,
-    const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg,
@@ -72,8 +70,6 @@ private:
   mutable std::atomic<int> parallel_opt_counter;
   InferenceServer is_;
   at::Device device_;
-  int n_qubits_;
-  int n_cores_;
 
 
   auto store_train_data(
@@ -81,9 +77,9 @@ private:
   ) const -> void;
 
   auto initialize_search(
+    int n_qubits,
     const at::Tensor& core_conns,
     const at::Tensor& core_caps,
-    const at::Tensor& slice_adjm,
     const at::Tensor& circuit_embs,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg

@@ -25,12 +25,9 @@ class TSEngine {
     }
 
 public:
-    TSEngine(
-        int n_qubits,
-        int n_cores,
-        const std::string &device)
+    TSEngine(const std::string &device)
     : device_(device_from_string(device))
-    , ts_(n_qubits, n_cores, device_from_string(device))
+    , ts_(device_from_string(device))
     {}
 
     auto load_model(const std::string &path) -> void {
@@ -46,9 +43,9 @@ public:
     }
 
     auto optimize(
+        int n_qubits,
         const at::Tensor& core_conns,
         const at::Tensor& core_caps,
-        const at::Tensor& slice_adjm,
         const at::Tensor& circuit_embs,
         const at::Tensor& alloc_steps,
         TreeSearch::OptConfig cfg,
@@ -56,9 +53,9 @@ public:
         bool verbose
     ) -> std::tuple<at::Tensor, int, float, std::optional<TreeSearch::TrainData>> {
         return ts_.optimize(
+            n_qubits,
             core_conns,
             core_caps,
-            slice_adjm,
             circuit_embs,
             alloc_steps,
             cfg,
@@ -92,7 +89,7 @@ PYBIND11_MODULE(ts_cpp_engine, m) {
         .def_readwrite("value",       &TreeSearch::TrainData::value);
     
     pybind11::class_<TSEngine>(m, "TSEngine")
-        .def(py::init<int, int, const std::string&>())
+        .def(py::init<const std::string&>())
         .def("load_model", &TSEngine::load_model)
         .def("has_model", &TSEngine::has_model)
         .def("rm_model", &TSEngine::rm_model)

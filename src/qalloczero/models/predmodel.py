@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Union
+from typing import Tuple, List
 import torch
 
 
@@ -24,32 +24,23 @@ class PredictionModel(torch.nn.Module):
   '''
 
   @staticmethod
-  def _get_ff():
-    return torch.nn.Sequential(
-      torch.nn.Linear(7,16),
-      torch.nn.ReLU(),
-      torch.nn.LayerNorm(16),
-
-      torch.nn.Linear(16,32),
-      torch.nn.ReLU(),
-      torch.nn.LayerNorm(32),
-
-      torch.nn.Linear(32,64),
-      torch.nn.ReLU(),
-      torch.nn.LayerNorm(64),
-    )
+  def _get_ff(layers: List[int]):
+    layers = [7] + layers
+    ff = torch.nn.Sequential()
+    for sz_pre, sz_post in zip(layers[:-1], layers[1:]):
+      ff.append(torch.nn.Linear(sz_pre, sz_post))
+      ff.append(torch.nn.ReLU())
+      ff.append(torch.nn.LayerNorm(sz_post))
+    return ff
 
 
   def __init__(
       self,
-      n_qubits: int,
-      n_cores: int,
-      number_emb_size: int,
-      n_heads: int,
+      layers: List[int],
   ):
     super().__init__()
-    self.ff_key = self._get_ff()
-    self.ff_query = self._get_ff()
+    self.ff_key = self._get_ff(layers)
+    self.ff_query = self._get_ff(layers)
     self.output_logits_ = False
 
 
@@ -98,6 +89,7 @@ class PredictionModel(torch.nn.Module):
     Q: int,
     device: torch.device
   ) -> torch.Tensor:
+    # TODO improve
     (B,C) = core_capacities.shape
     core_caps = torch.zeros([B,C], device=device) # [B,C]
     core_caps += (core_capacities >= 1).float()
@@ -125,6 +117,7 @@ class PredictionModel(torch.nn.Module):
     prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()]
     swap_cost[double_qubits] += core_connectivity[prev_cores,:]
     swap_cost = swap_cost.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
+    # TODO improve
     return swap_cost
 
 
@@ -227,7 +220,6 @@ class PredictionModel(torch.nn.Module):
       core_capacities: torch.Tensor,
       core_connectivity: torch.Tensor,
       circuit_emb: torch.Tensor,
-      slice_adj_mat: torch.Tensor,
   ) -> Tuple[torch.Tensor, torch.Tensor]:
     ''' Get the per-core allocation probability and normalized value function for the current state.
 
@@ -249,8 +241,6 @@ class PredictionModel(torch.nn.Module):
         batch.
       - circuit_emb [B,Q,Q]: For a batch of size B, contains a QxQ matrix which corresponds to the
         circuit embedding from the current slice until the end of the circuit.
-      - slice_adj_mat [B,Q,Q]: For a batch of size B, contains a QxQ matrix with the one hot encoded
-        adjacency matrix of the current slice being allocated.
 
     Returns:
       - [B,C]: For a batch of size B, a vector where each element corresponds to the probability of

@@ -9,11 +9,11 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 
 
 def test_direct_alloc():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -42,7 +42,7 @@ def test_direct_alloc():
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, = allocator.optimize(circuit, cfg)
+      allocs, cost, = allocator.optimize(circuit, cfg=cfg)
     print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f}\n{allocs}")
     check_sanity(allocs, circuit, hardware)
     drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
@@ -75,12 +75,12 @@ def test_direct_alloc():
     try:
       train_cfg = DirectAllocator.TrainConfig(
         train_iters=10_000,
-        batch_size=20,
+        batch_size=100,
         validation_size=20,
         initial_noise=0.3,
         noise_decrease_factor=0.95,
         sampler=RandomCircuit(num_lq=n_qubits, num_slices=8),
-        lr=1e-4,
+        lr=1e-5,
         invalid_move_penalty=0.3,
         # print_grad_each=5,
         # detailed_grad=False,

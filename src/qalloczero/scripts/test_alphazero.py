@@ -157,11 +157,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -175,11 +175,12 @@ def test_alphazero():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  azero = AlphaZero(
-    hardware,
-    device='cpu',
-    backend=AlphaZero.Backend.Cpp,
-  )
+  azero = AlphaZero.load("trained/direct_allocator", device="cpu")
+  # azero = AlphaZero(
+  #   hardware,
+  #   device='cpu',
+  #   backend=AlphaZero.Backend.Cpp,
+  # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
     target_tree_size=1028,
@@ -201,7 +202,6 @@ def test_alphazero():
       ucb_c1=0.05,
       ucb_c2=500,
     )
-    # azero.save("checkpoint", overwrite=True)
     azero = AlphaZero.load("trained/direct_allocator", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
@@ -240,32 +240,27 @@ def test_alphazero():
   
   if test_train:
     cfg = TSConfig(
-      target_tree_size=256,
-      noise=0.00,
+      target_tree_size=1024,
+      noise=0.70,
       dirichlet_alpha=0.0,
       discount_factor=0.0,
-      action_sel_temp=0.0,
-      # ucb_c1=0.1,
-      ucb_c1=0.5,
-      ucb_c2=10_000,
+      action_sel_temp=0,
+      ucb_c1=0.05,
+      ucb_c2=500,
     )
     try:
-      # for p in range(1,5):
-      #   ns = 2**p
-      #   print(f"\n ===== TRAINING WITH {ns} SLICES ===== \n")
-      #   sampler = RandomCircuit(num_lq=n_qubits, num_slices=ns)
-      sampler = RandomCircuit(num_lq=n_qubits, num_slices=8)
+      sampler = RandomCircuit(num_lq=n_qubits, num_slices=4)
       train_cfg = AlphaZero.TrainConfig(
         train_iters=2_000,
         batch_size=8,
-        n_data_augs=1,
+        n_data_augs=10,
         sampler=sampler,
-        noise_decrease_factor=0.99,
-        lr=0.1,
+        noise_decrease_factor=1,
+        lr=1e-3,
         pol_loss_w=1,
         ts_cfg=cfg,
-        print_grad_each=5,
-        detailed_grad=False,
+        # print_grad_each=5,
+        # detailed_grad=False,
       )
       azero.train(train_cfg, train_device='cuda')
       azero.save("trained/azero", overwrite=False)

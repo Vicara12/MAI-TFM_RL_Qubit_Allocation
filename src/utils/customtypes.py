@@ -97,10 +97,10 @@ class Circuit:
         free_qubits -= set(gate) # Remove qubits in gates from set of free qubits
         alloc_step += 1
       # Order free qubits by highest interaction intensity (ignoring itself)
-      ordered_fq = [(embs[slice_i,q,torch.arange(self.n_qubits) != q], (q,)) for q in free_qubits]
+      ordered_fq = [(embs[slice_i,q,torch.arange(self.n_qubits) != q].max(), (q,)) for q in free_qubits]
       if order:
         ordered_fq.sort(reverse=True)
-      for q in free_qubits:
+      for (_, (q,)) in ordered_fq:
         allocations[alloc_step,0] = slice_i
         allocations[alloc_step,1] = q
         allocations[alloc_step,2] = -1

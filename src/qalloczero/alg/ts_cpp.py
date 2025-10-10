@@ -14,12 +14,9 @@ from qalloczero.alg.ts_cpp_engine.build.ts_cpp_engine import (
 class TSCppEngine:
   def __init__(
     self,
-    n_qubits: int,
-    n_cores: int,
     device: str = "cpu",
   ):
-    self.cpp_engine = TSCppEngineInterface(
-      n_qubits, n_cores, device)
+    self.cpp_engine = TSCppEngineInterface(device)
   
   def load_model(self, model: torch.nn.Module):
     scripted_model = torch.jit.script(model)
@@ -41,9 +38,9 @@ class TSCppEngine:
   
   def optimize(
     self,
+    n_qubits: int,
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
-    slice_adjm: torch.Tensor,
     circuit_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
@@ -51,9 +48,9 @@ class TSCppEngine:
     verbose: bool,
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
     allocs, n_exp_nodes, expl_r, tdata = self.cpp_engine.optimize(
+      n_qubits,
       core_conns,
       core_caps,
-      slice_adjm,
       circuit_embs,
       alloc_steps,
       TSCppEngine._convert_cfg(cfg),

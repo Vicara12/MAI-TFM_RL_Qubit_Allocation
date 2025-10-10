@@ -88,11 +88,12 @@ struct TreeSearch::Node {
 
 
 struct TreeSearch::OptCtx {
+  int n_qubits;
+  int n_cores;
   int n_steps_;
   int n_slices_;
   at::Tensor core_caps_;
   at::Tensor core_conns_;
-  at::Tensor slice_adjm_;
   at::Tensor circuit_embs_;
   at::Tensor alloc_steps_;
   OptConfig cfg_;
@@ -112,14 +113,8 @@ TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores, at::Dev
 {}
 
 
-TreeSearch::TreeSearch(
-  int n_qubits,
-  int n_cores,
-  at::Device device
-)
-  : n_qubits_(n_qubits)
-  , n_cores_(n_cores)
-  , device_(device)
+TreeSearch::TreeSearch(at::Device device)
+  : device_(device)
   , parallel_opt_counter(0)
 {}
 
@@ -129,9 +124,9 @@ auto TreeSearch::get_is() -> InferenceServer& {
 
 
 auto TreeSearch::optimize(
+  int n_qubits,
   const at::Tensor& core_conns,
   const at::Tensor& core_caps,
-  const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg,
@@ -139,11 +134,11 @@ auto TreeSearch::optimize(
   bool verbose
 ) const -> std::tuple<at::Tensor, int, float, std::optional<TrainData>> {
   auto ctx = initialize_search(
-    core_conns, core_caps, slice_adjm, circuit_embs, alloc_steps, cfg);
-  at::Tensor allocs = at::empty({ctx.n_slices_, n_qubits_}, at::kInt);
+    n_qubits, core_conns, core_caps, circuit_embs, alloc_steps, cfg);
+  at::Tensor allocs = at::empty({ctx.n_slices_, ctx.n_qubits}, at::kInt);
   std::optional<TrainData> tdata;
   if (ret_train_data)
-    tdata = TrainData(ctx.n_steps_, n_qubits_, n_cores_, device_);
+    tdata = TrainData(ctx.n_steps_, ctx.n_qubits, ctx.n_cores, device_);
   int n_expanded_nodes = 0;
 
   for (size_t step = 0; step < ctx.n_steps_; step++) {
@@ -209,9 +204,9 @@ auto TreeSearch::store_train_data(
 
 
 auto TreeSearch::initialize_search(
+  int n_qubits,
   const at::Tensor& core_conns,
   const at::Tensor& core_caps,
-  const at::Tensor& slice_adjm,
   const at::Tensor& circuit_embs,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg
@@ -222,6 +217,8 @@ auto TreeSearch::initialize_search(
   // there is no need to create a new inference context. If there is an optimization going on we
   // create a new inference context so that it does not mess with the previous one.
   int n_opts = parallel_opt_counter.fetch_add(1);
+  ctx.n_qubits = n_qubits;
+  ctx.n_cores = core_caps.size(0);
   if (n_opts > 0) {
     // We use as key the address of the ctx variable to prevent concurrent duplicates
     ctx.inference_ctx = size_t(&ctx);
@@ -229,11 +226,10 @@ auto TreeSearch::initialize_search(
   }
   ctx.core_conns_ = core_conns.to(device_);
   ctx.core_caps_ = core_caps.to(device_);
-  ctx.slice_adjm_ = slice_adjm.to(device_);
   ctx.circuit_embs_ = circuit_embs.to(device_);
   ctx.alloc_steps_ = alloc_steps;
   ctx.cfg_ = cfg;
-  ctx.n_slices_ = slice_adjm.size(0);
+  ctx.n_slices_ = circuit_embs.size(0);
   ctx.n_steps_ = alloc_steps.size(0);
   ctx.root_ = build_root(ctx);
   return ctx;
@@ -271,7 +267,7 @@ auto TreeSearch::select_action(
   std::shared_ptr<const Node> node,
   float temp
 ) const -> std::tuple<int, at::Tensor> {
-    torch::Tensor visit_counts = torch::zeros({this->n_cores_}, torch::kFloat32);
+    torch::Tensor visit_counts = torch::zeros_like(*node->core_caps);
     if (node->expanded()) {
       for (const auto& [action, v] : *(node->children)) {
         auto child_node = std::get<0>(v);
@@ -312,12 +308,11 @@ auto TreeSearch::new_policy_and_val(
   auto model_out = is_.infer(
     ctx.inference_ctx,
     qubits.expand({batch,2}),
-    prev_allocs.expand({batch,n_qubits_}),
+    prev_allocs.expand({batch, ctx.n_qubits}),
     curr_allocs,
     core_caps,
     ctx.core_conns_,
-    ctx.circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_}),
-    ctx.slice_adjm_.index({slice_idx, Slice(), Slice()}).expand({batch, n_qubits_, n_qubits_})
+    ctx.circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, ctx.n_qubits, ctx.n_qubits})
   );
 
   // Get unnormalized value
@@ -342,8 +337,8 @@ auto TreeSearch::new_policy_and_val(
 
 auto TreeSearch::build_root(const OptCtx &ctx) const -> std::shared_ptr<Node> {
   auto root = std::make_shared<Node>();
-  root->current_allocs = n_cores_*at::ones({n_qubits_}, torch::kLong).to(device_);
-  root->prev_allocs    = n_cores_*at::ones({n_qubits_}, torch::kLong).to(device_);
+  root->current_allocs = ctx.n_cores*at::ones({ctx.n_qubits}, torch::kLong).to(device_);
+  root->prev_allocs    = ctx.n_cores*at::ones({ctx.n_qubits}, torch::kLong).to(device_);
   root->core_caps = ctx.core_caps_;
   root->alloc_step = 0;
   root->slice_idx  = 0;
@@ -382,7 +377,7 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
   std::vector<at::Tensor> core_caps_v;
   std::vector<std::shared_ptr<Node>> children_v;
   
-  for (size_t action = 0; action < n_cores_; action++) {
+  for (size_t action = 0; action < ctx.n_cores; action++) {
     if ((*node->policy)[action].item<float>() < 1e-5)
       continue;
     float cost = action_cost(ctx, node, action);
@@ -396,7 +391,7 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
     child->alloc_step = node->alloc_step + 1;
     child->slice_idx = slice_idx_children;
     if (child->slice_idx != node->slice_idx) {
-      child->current_allocs = n_cores_ * at::ones_like(*node->current_allocs).to(device_);
+      child->current_allocs = ctx.n_cores * at::ones_like(*node->current_allocs).to(device_);
       child->prev_allocs = node->current_allocs->clone();
       (*child->prev_allocs)[qubit0] = action;
       if (qubit1 != -1)
@@ -518,6 +513,6 @@ auto TreeSearch::select_child(
 
 auto TreeSearch::exploration_ratio(const OptCtx &ctx, int n_exp_nodes) const -> float {
   float theoretical_n_exp_nodes =
-    ctx.n_steps_ * ctx.cfg_.target_tree_size * (n_cores_ - 1)/n_cores_;
+    ctx.n_steps_ * ctx.cfg_.target_tree_size * (ctx.n_cores - 1)/ctx.n_cores;
   return n_exp_nodes/theoretical_n_exp_nodes;
 }

@@ -63,6 +63,7 @@ class TSPythonEngine(TSEngine):
 
   def optimize(
     self,
+    n_qubits: int,
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
     slice_adjm: torch.Tensor,

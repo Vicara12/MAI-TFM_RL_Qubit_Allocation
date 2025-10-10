@@ -42,38 +42,25 @@ class AlphaZero:
 
   def __init__(
     self,
-    hardware: Hardware,
+    default_hardware: Hardware,
     device: str = "cpu",
     backend: Backend = Backend.Cpp,
     model_cfg: ModelConfigs = ModelConfigs()
   ):
-    self.hardware = hardware
+    self.default_hw = default_hardware
     self.device = device
     self.backend = backend.value(
-      n_qubits=hardware.n_qubits,
-      n_cores=hardware.n_cores,
       device=device,
     )
-    self.circ_enc = CircuitEncoder(
-      n_qubits=hardware.n_qubits,
-      n_heads=model_cfg.ce_nheads,
-      n_layers=model_cfg.ce_nlayers,
-    )
-    self.circ_enc.to(device)
-    self.pred_model = PredictionModel(
-      n_qubits=hardware.n_qubits,
-      n_cores=hardware.n_cores,
-      number_emb_size=model_cfg.pm_nemb_sz,
-      n_heads=model_cfg.ce_nheads,
-    )
+    self.pred_model = PredictionModel(layers=model_cfg.layers)
     self.backend.load_model(self.pred_model)
     self.pred_model.to(device)
 
 
   def save(self, path: str, overwrite: bool = False):
     params = dict(
-      core_caps=self.hardware.core_capacities.tolist(),
-      core_conns=self.hardware.core_connectivity.tolist(),
+      core_caps=self.default_hw.core_capacities.tolist(),
+      core_conns=self.default_hw.core_connectivity.tolist(),
       backend=self.backend.__class__.__name__
     )
     if os.path.isdir(path):
@@ -91,7 +78,6 @@ class AlphaZero:
       os.makedirs(path)
     with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
-    torch.save(self.circ_enc.state_dict(), os.path.join(path, "circ_enc.pt"))
     torch.save(self.pred_model.state_dict(), os.path.join(path, "pred_mod.pt"))
 
 
@@ -106,14 +92,7 @@ class AlphaZero:
       params["backend"] = 'TSCppEngine'
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
-    loaded = AlphaZero(hardware=hardware, device=device, backend=backend)
-    loaded.circ_enc.load_state_dict(
-      torch.load(
-        os.path.join(path, "circ_enc.pt"),
-        weights_only=False,
-        map_location=device,
-      )
-    )
+    loaded = AlphaZero(default_hardware=hardware, device=device, backend=backend)
     loaded.pred_model.load_state_dict(
       torch.load(
         os.path.join(path, "pred_mod.pt"),
@@ -131,37 +110,37 @@ class AlphaZero:
     ts_cfg: TSConfig,
     verbose: bool = False,
   ) -> Tuple[torch.Tensor, float, int, float]:
-    if circuit.n_qubits != self.hardware.n_qubits:
+    if circuit.n_qubits != self.default_hw.n_qubits:
       raise Exception((
         f"Number of physical qubits does not match number of qubits in the "
-        f"circuit: {self.hardware.n_qubits} != {circuit.n_qubits}"
+        f"circuit: {self.default_hw.n_qubits} != {circuit.n_qubits}"
       ))
-    circ_embs = self.circ_enc(circuit.adj_matrices.unsqueeze(0).to(self.device)).squeeze(0)
     allocations, exp_nodes, expl_ratio, _ = self.backend.optimize(
-      core_caps=self.hardware.core_capacities,
-      core_conns=self.hardware.core_connectivity,
-      slice_adjm=circuit.adj_matrices,
-      circuit_embs=circ_embs,
+      n_qubits=circuit.n_qubits,
+      core_caps=self.default_hw.core_capacities,
+      core_conns=self.default_hw.core_connectivity,
+      circuit_embs=circuit.embedding,
       alloc_steps=circuit.alloc_steps,
       cfg=ts_cfg,
       ret_train_data=False,
       verbose=verbose,
     )
-    cost = sol_cost(allocations, self.hardware.core_connectivity)
+    cost = sol_cost(allocations, self.default_hw.core_connectivity)
     return allocations, cost, exp_nodes, expl_ratio
 
 
   def optimize_mult(
       self,
       circuits: List[Circuit],
+      hardware: Optional[Hardware],
       ts_cfg: TSConfig,
   ) -> List[Tuple[torch.Tensor, float, int, float]]:
-    circ_adjs = [circ.adj_matrices.to(self.device) for circ in circuits]
-    circ_embs = self.circ_enc(torch.stack(circ_adjs))
+    if hardware is None:
+      hardware = self.default_hw
 
     def work(azero, **kwargs):
       allocations, exp_nodes, expl_ratio, _ = azero.backend.optimize(**kwargs)
-      cost = sol_cost(allocations, azero.hardware.core_connectivity)
+      cost = sol_cost(allocations, hardware.core_connectivity)
       return allocations, cost, exp_nodes, expl_ratio
 
     with ThreadPoolExecutor(max_workers=len(circuits)) as executor:
@@ -170,10 +149,10 @@ class AlphaZero:
         executor.submit(
           work,
           self,
-          core_caps=self.hardware.core_capacities,
-          core_conns=self.hardware.core_connectivity,
-          slice_adjm=circ_adjs[i],
-          circuit_embs=circ_embs[i],
+          n_qubits=circuits[i].n_qubits,
+          core_caps=self.default_hw.core_capacities,
+          core_conns=self.default_hw.core_connectivity,
+          circuit_embs=circuits[i].embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=False,
@@ -188,27 +167,27 @@ class AlphaZero:
   def _optimize_mult_train(
     self,
     circuits: List[Circuit],
-    adj_mats: torch.Tensor,
+    hardware: Optional[Hardware],
     ts_cfg,
   ) -> List[Tuple[float, float, TSTrainData]]:
-    adj_mats = adj_mats.to(self.device)
-    circ_embs = self.circ_enc(adj_mats)
+    if hardware is None:
+      hardware = self.default_hw
 
     def work(azero, **kwargs):
       allocations, exp_nodes, expl_ratio, tdata = azero.backend.optimize(**kwargs)
-      norm_cost = sol_cost(allocations, azero.hardware.core_connectivity)/kwargs['alloc_steps'][0][3]
+      norm_cost = sol_cost(allocations, hardware.core_connectivity)/kwargs['alloc_steps'][0][3]
       return norm_cost, expl_ratio, tdata
 
-    with ThreadPoolExecutor(max_workers=len(adj_mats)) as executor:
+    with ThreadPoolExecutor(max_workers=len(circuits)) as executor:
       # A dictionary of future : i so that we are able to map results to input circuits later on
       future_map = {
         executor.submit(
           work,
           self,
-          core_caps=self.hardware.core_capacities,
-          core_conns=self.hardware.core_connectivity,
-          slice_adjm=adj_mats[i],
-          circuit_embs=circ_embs[i],
+          n_qubits=circuits[i].n_qubits,
+          core_caps=self.default_hw.core_capacities,
+          core_conns=self.default_hw.core_connectivity,
+          circuit_embs=circuits[i].embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=True,
@@ -234,7 +213,7 @@ class AlphaZero:
     prob_loss = torch.nn.CrossEntropyLoss()
     val_loss = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(
-      chain(self.circ_enc.parameters(), self.pred_model.parameters()), lr=train_cfg.lr
+      self.pred_model.parameters(), lr=train_cfg.lr
     )
     self.pgrad_counter = 1
 
@@ -242,17 +221,14 @@ class AlphaZero:
       for iter in range(train_cfg.train_iters):
         self.iter_timer.start()
         print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")
-        self.circ_enc.eval()
-        self.circ_enc.to(self.device)
         self.pred_model.eval()
         self.pred_model.to(self.device)
         circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
-        circ_adjs = torch.stack([circ.adj_matrices for circ in circuits])
         avg_cost = 0
         avg_expl_r = 0
         train_data = []
         with self.timer:
-          results = self._optimize_mult_train(circuits, circ_adjs, train_cfg.ts_cfg)
+          results = self._optimize_mult_train(circuits, self.default_hw, train_cfg.ts_cfg)
         for (cost, er, tdata) in results:
           avg_cost += cost
           avg_expl_r += er
@@ -265,34 +241,31 @@ class AlphaZero:
         avg_loss = 0
         avg_loss_pol = 0
         avg_loss_val = 0
-        circ_adjs = circ_adjs.to(train_device)
-        core_cons = self.hardware.core_connectivity.to(train_device)
+        core_cons = self.default_hw.core_connectivity.to(train_device)
         with self.timer:
-          self.circ_enc.train()
-          self.circ_enc.to(train_device)
           self.pred_model.train()
           self.pred_model.output_logits(True)
           self.pred_model.to(train_device)
           for batch, tdata in enumerate(train_data):
+            circ_emb = circuits[batch].embedding.to(train_device)
             qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values = self._move_train_data(tdata, train_device)
             for _ in range(train_cfg.n_data_augs):
               perm, perm_qubits = self._perm_qubits(qubits, train_device)
-              new_adj = circ_adjs[batch][:,perm,:][:,:,perm]
-              circ_embs = self.circ_enc(new_adj.unsqueeze(0)).squeeze(0)
+              circ_emb = circ_emb[:,perm,:][:,:,perm]
               pols, values = self.pred_model(
                 qubits=perm_qubits,
                 prev_core_allocs=prev_allocs[:,perm],
                 current_core_allocs=curr_allocs[:,perm],
                 core_capacities=core_caps,
                 core_connectivity=core_cons,
-                circuit_emb=circ_embs[slice_idx],
-                slice_adj_mat=new_adj[slice_idx],
+                circuit_emb=circ_emb[slice_idx],
               )
               loss_pols = train_cfg.pol_loss_w * prob_loss(pols, ref_logits)
               loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, ref_values)
               loss = loss_pols + loss_vals
               optimizer.zero_grad()
               loss.backward()
+              torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
               optimizer.step()
               avg_loss += loss
               avg_loss_pol += loss_pols
@@ -314,13 +287,9 @@ class AlphaZero:
         ))
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
           if train_cfg.detailed_grad:
-            print(f"\n[+] Gradient information for prediction model:")
             print_grad(self.pred_model)
-            print(f"\n[+] Gradient information for circuit encoder:")
-            print_grad(self.circ_enc)
           else:
             print_grad_stats(self.pred_model, 'prediction model')
-            print_grad_stats(self.circ_enc, 'circuit encoder')
           self.pgrad_counter = 1
         else:
           self.pgrad_counter += 1
@@ -341,7 +310,7 @@ class AlphaZero:
   
 
   def _perm_qubits(self, qubits, device) -> Tuple[torch.Tensor, torch.Tensor]:
-    perm = torch.randperm(self.hardware.n_qubits, dtype=torch.int, device=device)
+    perm = torch.randperm(self.default_hw.n_qubits, dtype=torch.int, device=device)
     qubit_mask = qubits != -1
     perm_qubits = qubits.clone()
     perm_qubits[qubit_mask] = perm[qubits[qubit_mask]]
