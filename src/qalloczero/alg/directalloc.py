@@ -47,7 +47,7 @@ class DirectAllocator:
   ):
     self.default_hw = default_hardware
     self.model_cfg = model_cfg
-    self.pred_model = PredictionModel(layers=model_cfg.layers)
+    self.pred_model = PredictionModel(layers=model_cfg.layers, dropout=model_cfg.dropout)
     self.pred_model.to(device)
   
 
@@ -61,6 +61,7 @@ class DirectAllocator:
       core_caps=self.default_hw.core_capacities.tolist(),
       core_conns=self.default_hw.core_connectivity.tolist(),
       layers=self.model_cfg.layers,
+      dropout=self.model_cfg.dropout,
     )
     if os.path.isdir(path):
       warnings.warn(f"provided folder \"{path}\" already exists")
@@ -87,7 +88,7 @@ class DirectAllocator:
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
-    model_cfg = ModelConfigs(layers=params['layers'])
+    model_cfg = ModelConfigs(layers=params['layers'], dropout=params['dropout'])
     loaded = DirectAllocator(default_hardware=hardware, device=device, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
       torch.load(
