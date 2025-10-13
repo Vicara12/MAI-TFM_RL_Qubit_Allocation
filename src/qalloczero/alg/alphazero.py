@@ -34,7 +34,6 @@ class AlphaZero:
     n_data_augs: int
     sampler: CircuitSampler
     lr: float
-    pol_loss_w: float
     ts_cfg: TSConfig
     print_grad_each: Optional[int] = None
     detailed_grad: bool = False
@@ -111,32 +110,36 @@ class AlphaZero:
     self,
     circuit: Circuit,
     ts_cfg: TSConfig,
+    hardware: Optional[Hardware] = None,
     verbose: bool = False,
   ) -> Tuple[torch.Tensor, float, int, float]:
-    if circuit.n_qubits != self.default_hw.n_qubits:
+    if hardware is None:
+      hardware = self.default_hw
+
+    if circuit.n_qubits != hardware.n_qubits:
       raise Exception((
         f"Number of physical qubits does not match number of qubits in the "
-        f"circuit: {self.default_hw.n_qubits} != {circuit.n_qubits}"
+        f"circuit: {hardware.n_qubits} != {circuit.n_qubits}"
       ))
     allocations, exp_nodes, expl_ratio, _ = self.backend.optimize(
       n_qubits=circuit.n_qubits,
-      core_caps=self.default_hw.core_capacities,
-      core_conns=self.default_hw.core_connectivity,
+      core_caps=hardware.core_capacities,
+      core_conns=hardware.core_connectivity,
       circuit_embs=circuit.embedding,
       alloc_steps=circuit.alloc_steps,
       cfg=ts_cfg,
       ret_train_data=False,
       verbose=verbose,
     )
-    cost = sol_cost(allocations, self.default_hw.core_connectivity)
+    cost = sol_cost(allocations, hardware.core_connectivity)
     return allocations, cost, exp_nodes, expl_ratio
 
 
   def optimize_mult(
       self,
       circuits: List[Circuit],
-      hardware: Optional[Hardware],
       ts_cfg: TSConfig,
+      hardware: Optional[Hardware] = None,
   ) -> List[Tuple[torch.Tensor, float, int, float]]:
     if hardware is None:
       hardware = self.default_hw
@@ -214,7 +217,6 @@ class AlphaZero:
     self.timer.reset()
     self.iter_timer.reset()
     prob_loss = torch.nn.CrossEntropyLoss()
-    val_loss = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(
       self.pred_model.parameters(), lr=train_cfg.lr
     )
@@ -227,23 +229,21 @@ class AlphaZero:
         self.pred_model.eval()
         self.pred_model.to(self.device)
         circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
-        avg_cost = 0
+        costs = []
         avg_expl_r = 0
         train_data = []
         with self.timer:
           results = self._optimize_mult_train(circuits, self.default_hw, train_cfg.ts_cfg)
         for (cost, er, tdata) in results:
-          avg_cost += cost
+          costs.append(cost)
           avg_expl_r += er
           train_data.append(tdata)
         print((
-          f" + Obtained train data: t={self.timer.time:.2f} ac={avg_cost/train_cfg.batch_size:.3f} "
+          f" + Obtained train data: t={self.timer.time:.2f} ac={sum(costs)/len(costs):.3f} "
           f" er={avg_expl_r/train_cfg.batch_size:.3f} (noise={train_cfg.ts_cfg.noise:.3f})"
         ))
         
         avg_loss = 0
-        avg_loss_pol = 0
-        avg_loss_val = 0
         core_cons = self.default_hw.core_connectivity.to(train_device)
         with self.timer:
           self.pred_model.train()
@@ -251,33 +251,26 @@ class AlphaZero:
           self.pred_model.to(train_device)
           for batch, tdata in enumerate(train_data):
             circ_emb = circuits[batch].embedding.to(train_device)
-            qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values = self._move_train_data(tdata, train_device)
-            for _ in range(train_cfg.n_data_augs):
-              perm, perm_qubits = self._perm_qubits(qubits, train_device)
-              circ_emb = circ_emb[:,perm,:][:,:,perm]
-              pols, values = self.pred_model(
-                qubits=perm_qubits,
-                prev_core_allocs=prev_allocs[:,perm],
-                current_core_allocs=curr_allocs[:,perm],
-                core_capacities=core_caps,
-                core_connectivity=core_cons,
-                circuit_emb=circ_emb[slice_idx],
-              )
-              loss_pols = train_cfg.pol_loss_w * prob_loss(pols, ref_logits)
-              loss_vals = (1 - train_cfg.pol_loss_w) * val_loss(values, ref_values)
-              loss = loss_pols + loss_vals
-              optimizer.zero_grad()
-              loss.backward()
-              torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
-              optimizer.step()
-              avg_loss += loss
-              avg_loss_pol += loss_pols
-              avg_loss_val += loss_vals
+            qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, _ = self._move_train_data(tdata, train_device)
+            pols, _ = self.pred_model(
+              qubits=qubits,
+              prev_core_allocs=prev_allocs,
+              current_core_allocs=curr_allocs,
+              core_capacities=core_caps,
+              core_connectivity=core_cons,
+              circuit_emb=circ_emb[slice_idx],
+            )
+            # weight = 1 if costs[batch] == 0 else 1/costs[batch] # Protection against Nans
+            loss = prob_loss(pols, ref_logits)
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
+            optimizer.step()
+            avg_loss += loss
         self.pred_model.output_logits(False)
         n_iters = train_cfg.batch_size*train_cfg.n_data_augs
         print((
-          f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f} "
-          f" (pol={avg_loss_pol/n_iters:.4f}, val={avg_loss_val/n_iters:.4f})"
+          f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f}"
         ))
 
         train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor

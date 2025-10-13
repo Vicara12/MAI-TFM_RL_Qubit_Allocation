@@ -92,7 +92,7 @@ def linear_search():
 
   n_circuits = 8
   n_qubits = 16
-  n_slices = 32
+  n_slices = 16
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   hardware = Hardware(
@@ -104,13 +104,13 @@ def linear_search():
   #   device='cpu',
   #   backend=AlphaZero.Backend.Cpp,
   # )
-  azero = AlphaZero.load("trained/direct_allocator", device="cpu")
+  azero = AlphaZero.load("trained/direct_allocator_v3", device="cpu")
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuits = [sampler.sample() for i in range(n_circuits)]
   cfg_params = dict(
     target_tree_size=512,
-    noise=0.70,
-    dirichlet_alpha=0.0,
+    noise=0.40,
+    dirichlet_alpha=0.25,
     discount_factor=0.0,
     action_sel_temp=0,
     ucb_c1=0.05,
@@ -129,9 +129,10 @@ def linear_search():
       cfg_params[param] = value
       cfg = TSConfig(**cfg_params)
       with Timer.get('t'):
-        exec_res = azero.optimize_mult(circuits, cfg)
+        exec_res = azero.optimize_mult(circuits, ts_cfg=cfg)
       get_mean = lambda idx: torch.mean(torch.tensor([float(res[idx]) for res in exec_res])).item()
-      avg_cost = get_mean(1)
+      norm_cost = [res[1]/circ.n_gates_norm for (res,circ) in zip(exec_res, circuits)]
+      avg_cost = sum(norm_cost)/len(norm_cost)
       avg_exp_nodes = get_mean(2)
       avg_expl_ratio = get_mean(3)
       results_param[value] = (avg_cost, avg_exp_nodes, avg_expl_ratio)

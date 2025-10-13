@@ -78,7 +78,7 @@ def test_direct_alloc():
     allocator = DirectAllocator(
       hardware,
       device='cuda',
-      model_cfg=ModelConfigs(layers=[8,16,32,32,64,64]),
+      model_cfg=ModelConfigs(layers=[8,16,32,32,64,64,128,128]),
     )
     try:
       train_cfg = DirectAllocator.TrainConfig(

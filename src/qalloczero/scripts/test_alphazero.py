@@ -243,25 +243,24 @@ def test_alphazero():
   
   if test_train:
     cfg = TSConfig(
-      target_tree_size=1024,
-      noise=0.70,
+      target_tree_size=2048*2,
+      noise=0.40,
       dirichlet_alpha=0.0,
       discount_factor=0.0,
       action_sel_temp=0,
-      ucb_c1=0.05,
+      ucb_c1=0.005,
       ucb_c2=500,
     )
-    azero = AlphaZero.load("trained/direct_allocator_v2", device="cpu")
+    azero = AlphaZero.load("trained/direct_allocator_v3", device="cpu")
     try:
-      sampler = RandomCircuit(num_lq=n_qubits, num_slices=4)
+      sampler = RandomCircuit(num_lq=n_qubits, num_slices=32)
       train_cfg = AlphaZero.TrainConfig(
         train_iters=2_000,
-        batch_size=8,
-        n_data_augs=10,
+        batch_size=16,
+        n_data_augs=1,
         sampler=sampler,
         noise_decrease_factor=1,
-        lr=1e-3,
-        pol_loss_w=1,
+        lr=1e-4,
         ts_cfg=cfg,
         # print_grad_each=5,
         # detailed_grad=False,
