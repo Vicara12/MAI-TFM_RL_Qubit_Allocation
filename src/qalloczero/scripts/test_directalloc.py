@@ -26,7 +26,7 @@ def test_direct_alloc():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
+  # allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
   # allocator = DirectAllocator(
   #   hardware,
   #   device='cuda',

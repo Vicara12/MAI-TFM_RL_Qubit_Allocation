@@ -3,6 +3,28 @@ import torch
 
 
 
+class EmbedModel(torch.nn.Module):
+  def __init__(self, layer_sizes: List[int], dropout: float):
+    super().__init__()
+    self.layer_sizes = layer_sizes
+    self.layers = torch.nn.ModuleList()
+    self.same_shape = []
+    for (prev_sz, next_sz) in zip(layer_sizes[:-1], layer_sizes[1:]):
+      self.layers.append(torch.nn.Sequential(
+        torch.nn.LayerNorm(prev_sz),
+        torch.nn.Linear(prev_sz, next_sz),
+        torch.nn.ReLU(),
+        torch.nn.Dropout(dropout),
+      ))
+      self.same_shape.append(prev_sz == next_sz)
+  
+  def forward(self, x):
+    for (ff, same_shape) in zip(self.layers, self.same_shape):
+      x = (ff(x) + x) if same_shape else ff(x)
+    return x
+
+
+
 class PredictionModel(torch.nn.Module):
   ''' For each qubit and time slice, output core allocation probability density and value of state.
 
@@ -23,24 +45,15 @@ class PredictionModel(torch.nn.Module):
     - n_heads: number of heads used in the MHA mixing of core embeddings and allocation context.
   '''
 
-  @staticmethod
-  def _get_ff(layers: List[int]):
-    layers = [7] + layers
-    ff = torch.nn.Sequential()
-    for sz_pre, sz_post in zip(layers[:-1], layers[1:]):
-      ff.append(torch.nn.Linear(sz_pre, sz_post))
-      ff.append(torch.nn.ReLU())
-      ff.append(torch.nn.LayerNorm(sz_post))
-    return ff
-
-
   def __init__(
       self,
       layers: List[int],
+      dropout: float = 0.1,
   ):
     super().__init__()
-    self.ff_key = self._get_ff(layers)
-    self.ff_query = self._get_ff(layers)
+    layers = [7] + layers
+    self.ff_key = EmbedModel(layers, dropout)
+    self.ff_query = EmbedModel(layers, dropout)
     self.output_logits_ = False
 
 
