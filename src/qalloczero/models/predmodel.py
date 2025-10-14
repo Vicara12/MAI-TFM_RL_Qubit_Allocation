@@ -270,4 +270,5 @@ class PredictionModel(torch.nn.Module):
     if self.output_logits_:
       return logits, vals
     probs = torch.softmax(logits, dim=-1) # [B,C]
-    return probs, vals
+    log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
+    return probs, vals, log_probs

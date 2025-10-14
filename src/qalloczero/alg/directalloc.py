@@ -107,7 +107,6 @@ class DirectAllocator:
     n_qubits: int,
     cfg: DAConfig,
   ) -> Tuple[int, torch.Tensor, torch.Tensor]:
-    pol = pol.squeeze(0)
     # Set prior of cores that do not have space for this alloc to zero
     valid_cores = (core_caps >= n_qubits)
     assert valid_cores.any().item(), "No valid allocation possible"
@@ -151,7 +150,7 @@ class DirectAllocator:
         prev_core_allocs = core_allocs
         core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
         core_caps = core_caps_orig.clone()
-      pol, _ = self.pred_model(
+      pol, _, log_pol = self.pred_model(
         qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
         prev_core_allocs=prev_core_allocs.unsqueeze(0),
         current_core_allocs=core_allocs.unsqueeze(0),
@@ -159,6 +158,8 @@ class DirectAllocator:
         core_connectivity=hardware.core_connectivity.to(self.device),
         circuit_emb=circ_embs[:,slice_idx],
       )
+      pol = pol.squeeze(0)
+      log_pol = log_pol.squeeze(0)
       n_qubits = (1 if qubit1 == -1 else 2)
       action, pol, valid_cores = self._sample_action(
         pol=pol,
@@ -172,9 +173,8 @@ class DirectAllocator:
         allocations[slice_idx,qubit1] = action
         core_allocs[qubit1] = action
       if ret_train_data:
-
         all_actions.append(action)
-        all_probs.append(pol)
+        all_probs.append(log_pol)
         all_valid_cores.append(valid_cores)
       core_caps[action] = max(0, core_caps[action] - n_qubits)
       prev_slice = slice_idx
@@ -276,7 +276,7 @@ class DirectAllocator:
     circuit = train_cfg.sampler.sample()
     circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
     all_costs = []
-    action_probs = []
+    action_log_probs = []
     valid_moves = []
 
     for batch_i in range(train_cfg.batch_size):
@@ -285,7 +285,7 @@ class DirectAllocator:
         end=''
       )
       allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-      actions, probs, valid_cores = self._allocate(
+      actions, log_probs, valid_cores = self._allocate(
         allocations=allocations,
         circ_embs=circ_embs,
         alloc_steps=circuit.alloc_steps,
@@ -296,18 +296,18 @@ class DirectAllocator:
       cost = sol_cost(allocations=allocations, core_con=self.default_hw.core_connectivity)
       all_costs.append(cost/(circuit.n_gates_norm + 1))
       valid_moves.append(valid_cores[torch.arange(valid_cores.shape[0]), actions])
-      action_probs.append(probs[torch.arange(probs.shape[0]), actions])
+      action_log_probs.append(log_probs[torch.arange(log_probs.shape[0]), actions])
 
     all_costs = torch.tensor(all_costs)
     all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
     all_costs = all_costs.tolist()
 
-    for (cost, action_prob, valid_move) in zip(all_costs, action_probs, valid_moves):
+    for (cost, action_log_prob, valid_move) in zip(all_costs, action_log_probs, valid_moves):
       # This loss tries to maximize the probability of actions that resulted in reduced cost wrt the
       # baseline and minimize those that resulted in worse cost wrt to the baseline
-      cost_loss += cost * torch.sum(action_prob[valid_move])
+      cost_loss += cost * torch.sum(action_log_prob[valid_move])
       # This loss tries to maximize the number of valid moves (vm) the network does
-      valid_move_loss += torch.sum(action_prob[~valid_move])
+      valid_move_loss += torch.sum(action_log_prob[~valid_move])
 
     valid_move_loss *= train_cfg.invalid_move_penalty
     loss = cost_loss + valid_move_loss
