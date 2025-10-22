@@ -1,0 +1,42 @@
+\documentclass[10pt]{report}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{biblatex}
+\usepackage{fancyhdr}
+\usepackage{pdfpages}
+\usepackage{tocloft}
+\usepackage[
+    a4paper,
+    left=2cm,
+    right=2cm,
+    top=3cm,
+    bottom=3cm
+]{geometry}
+\usepackage{comment}
+\usepackage[hidelinks]{hyperref}
+
+\input{setup}
+
+\begin{document}
+
+% TODO update once title is changed
+\includepdf{resources/cover.pdf}
+
+\include{text/_abstract}
+
+\pagestyle{fancy}
+\rhead{{Master Thesis}}
+\lhead{{\leftmark}}
+\tableofcontents
+
+\include{text/0_summary}
+\include{text/1_intro}
+\include{text/2_problem}
+\include{text/3_sota}
+\include{text/4_solution}
+\include{text/5_results}
+\include{text/6_conclusions}
+
+\printbibliography
+
+\end{document}

@@ -1,10 +1,11 @@
 docs/papers
 docs/russo\ impl/russo_notes.md
 docs/qalloczero/qalloczero_notes.md
+docs/test_doc
 .vscode
 **/__pycache__/**
 venv
 trained/**
 misc
-src/qalloczero/alg/ts_cpp_engine/build
+**/build/**
 allocation.svg
