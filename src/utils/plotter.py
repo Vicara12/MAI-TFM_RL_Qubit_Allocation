@@ -67,7 +67,8 @@ def drawQubitAllocation(
   # Extract all unique qubit IDs
   color_map = [matplotlib.cm.viridis(i / num_pq) for i in range(num_pq)]
 
-  _, ax = plt.subplots(figsize=(num_steps * figsize_scale, num_pq*num_pq/num_steps))
+  _, ax = plt.subplots(figsize=(2.6,3.2))
+  # _, ax = plt.subplots()
 
   # Draw horizontal gray dotted lines with core boundaries
   if core_capacities is not None:
@@ -86,14 +87,14 @@ def drawQubitAllocation(
   if circuit_slice_gates is not None:
     for t, circuit_slice in enumerate(circuit_slice_gates):
         alloc_slice = pq_allocations[t,:].squeeze().tolist()
-        for gate in circuit_slice:
+        for i, gate in enumerate(circuit_slice):
           pq0 = alloc_slice[gate[0]]
           pq1 = alloc_slice[gate[1]]
-          verts = [(t - 0.3,       num_pq - pq0 - 1),
-                    (t - 0.3 - 0.2, num_pq - pq0 - 1),
-                    (t - 0.3 - 0.2, num_pq - pq1 - 1),
+          verts = [ (t - 0.3,       num_pq - pq0 - 1),
+                    (t - 0.3 - (i+1)*0.05 , num_pq - pq0 - 1),
+                    (t - 0.3 - (i+1)*0.05, num_pq - pq1 - 1),
                     (t - 0.3,       num_pq - pq1 - 1)]
-          codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]
+          codes = [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO]
           path = Path(verts, codes)
           patch = patches.PathPatch(path, facecolor='none', edgecolor='black', lw=1.25, alpha=0.85)
           ax.add_patch(patch)
@@ -114,10 +115,10 @@ def drawQubitAllocation(
           if t != 0 and qubit_allocation[t-1,qubit] != qubit_allocation[t,qubit]:
             prev_y = last_q_positions[qubit]
             verts = [
-                (t-1, prev_y),
-                (t-1 + 0.4, prev_y),
-                (t - 0.4, y),
-                (t, y)
+                (t-0.7,       prev_y),
+                (t-0.7 + 0.2, prev_y),
+                (t-0.3 - 0.2, y),
+                (t-0.3,       y)
             ]
             codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]
             path = Path(verts, codes)
@@ -131,9 +132,9 @@ def drawQubitAllocation(
   ax.set_yticklabels(list(range(num_pq))[::-1])
   ax.set_xlabel("Time")
   ax.set_ylabel("Physical qubit")
-  ax.set_aspect(num_pq/num_steps)
+  ax.set_aspect('equal')
   plt.grid(False)
-  plt.tight_layout(pad=3)
+  plt.tight_layout(pad=0.5)
   if show:
     plt.show()
   if file_name is not None:
