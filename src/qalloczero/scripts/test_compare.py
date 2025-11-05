@@ -18,25 +18,19 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    da_raw = DirectAllocator(
-      hardware=hardware,
-      device='cuda',
-    ),
     da_trained = DirectAllocator.load("trained/direct_allocator", device="cuda"),
-    azero_raw = AlphaZero(
-      hardware,
-      device='cpu',
-      backend=AlphaZero.Backend.Cpp,
-    ),
-    azero_trained = AlphaZero.load("trained/direct_allocator", device="cpu")
+    azero_trained =    AlphaZero.load("trained/direct_allocator", device="cpu"),
+    da_azero = DirectAllocator.load("trained/azero", device="cuda"),
+    azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
+
   )
   cfg = TSConfig(
-    target_tree_size=2048,
-    noise=0.70,
+    target_tree_size=512,
+    noise=0.40,
     dirichlet_alpha=0.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.05,
+    ucb_c1=0.005,
     ucb_c2=500,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
@@ -55,6 +49,6 @@ def validate():
         raise Exception("Unrecognized algorithm type")
     norm_res = [res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)]
     norm_swaps = [
-      count_swaps(swaps_from_alloc(res[0]))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
+      count_swaps(swaps_from_alloc(res[0], n_cores))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
     ]
     print(f" + t={Timer.get('t').time:.2f}s avg_cost={sum(norm_res)/len(norm_res):.4f} avg_swaps={sum(norm_swaps)/len(norm_swaps):.4f}")

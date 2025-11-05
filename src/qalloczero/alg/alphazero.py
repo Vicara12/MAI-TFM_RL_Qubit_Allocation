@@ -253,7 +253,7 @@ class AlphaZero:
           for batch, tdata in enumerate(train_data):
             circ_emb = circuits[batch].embedding.to(train_device)
             qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, _ = self._move_train_data(tdata, train_device)
-            pols, _ = self.pred_model(
+            pols, _, _ = self.pred_model(
               qubits=qubits,
               prev_core_allocs=prev_allocs,
               current_core_allocs=curr_allocs,

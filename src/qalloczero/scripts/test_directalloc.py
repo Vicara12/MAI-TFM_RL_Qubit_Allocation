@@ -21,7 +21,7 @@ def test_direct_alloc():
 
   torch.manual_seed(42)
   n_qubits = 16
-  n_slices = 32
+  n_slices = 16
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
@@ -39,6 +39,7 @@ def test_direct_alloc():
   )
 
   if test_run:
+    allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
@@ -78,18 +79,19 @@ def test_direct_alloc():
     allocator = DirectAllocator(
       hardware,
       device='cuda',
-      model_cfg=ModelConfigs(layers=[8,16,32,32,64,64,128,128]),
+      model_cfg=ModelConfigs(layers=[8,8,16,16,32,32,64,64,64], dropout=0),
     )
+    # allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
     try:
       train_cfg = DirectAllocator.TrainConfig(
         train_iters=1_000,
         batch_size=100,
-        validation_size=20,
-        initial_noise=0.3,
+        validation_size=50,
+        initial_noise=0.4,
         noise_decrease_factor=0.95,
-        sampler=RandomCircuit(num_lq=n_qubits, num_slices=8),
-        lr=1e-5,
-        invalid_move_penalty=0.3,
+        sampler=RandomCircuit(num_lq=n_qubits, num_slices=16),
+        lr=5e-5,
+        invalid_move_penalty=0.4,
         # print_grad_each=5,
         # detailed_grad=False,
       )

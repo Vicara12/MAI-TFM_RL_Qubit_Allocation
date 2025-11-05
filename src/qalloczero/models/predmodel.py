@@ -8,7 +8,7 @@ class EmbedModel(torch.nn.Module):
     super().__init__()
     self.layer_sizes = layer_sizes
     self.layers = torch.nn.ModuleList()
-    self.same_shape = []
+    same_shape_list = []
     for (prev_sz, next_sz) in zip(layer_sizes[:-1], layer_sizes[1:]):
       self.layers.append(torch.nn.Sequential(
         torch.nn.LayerNorm(prev_sz),
@@ -16,11 +16,13 @@ class EmbedModel(torch.nn.Module):
         torch.nn.ReLU(),
         torch.nn.Dropout(dropout),
       ))
-      self.same_shape.append(prev_sz == next_sz)
+      same_shape_list.append(prev_sz == next_sz)
+    self.register_buffer("same_shape", torch.tensor(same_shape_list, dtype=torch.bool))
+
   
   def forward(self, x):
-    for (ff, same_shape) in zip(self.layers, self.same_shape):
-      x = (ff(x) + x) if same_shape else ff(x)
+    for i, ff in enumerate(self.layers):
+      x = (ff(x) + x) if self.same_shape[i] else ff(x)
     return x
 
 
@@ -104,10 +106,7 @@ class PredictionModel(torch.nn.Module):
   ) -> torch.Tensor:
     # TODO improve
     (B,C) = core_capacities.shape
-    core_caps = torch.zeros([B,C], device=device) # [B,C]
-    core_caps += (core_capacities >= 1).float()
-    core_caps += (core_capacities >= 2).float()
-    core_caps *= 0.5
+    core_caps = 1/(core_capacities + 1)
     core_caps = core_caps.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
     return core_caps
 
@@ -129,6 +128,7 @@ class PredictionModel(torch.nn.Module):
     double_qubits = (qubits[:,1] != -1) & has_prev_core
     prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()]
     swap_cost[double_qubits] += core_connectivity[prev_cores,:]
+    swap_cost = 1/(swap_cost + 1)
     swap_cost = swap_cost.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
     # TODO improve
     return swap_cost
@@ -233,7 +233,7 @@ class PredictionModel(torch.nn.Module):
       core_capacities: torch.Tensor,
       core_connectivity: torch.Tensor,
       circuit_emb: torch.Tensor,
-  ) -> Tuple[torch.Tensor, torch.Tensor]:
+  ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     ''' Get the per-core allocation probability and normalized value function for the current state.
 
     Args:
@@ -267,8 +267,8 @@ class PredictionModel(torch.nn.Module):
     projs = self._project(key_embs, q0_embs, q1_embs) # [B,C,Q]
     logits = projs.max(dim=-1)[0] # [B,C]
     vals = torch.tensor([[1] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
-    if self.output_logits_:
-      return logits, vals
-    probs = torch.softmax(logits, dim=-1) # [B,C]
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
+    if self.output_logits_:
+      return logits, vals, log_probs
+    probs = torch.softmax(logits, dim=-1) # [B,C]
     return probs, vals, log_probs

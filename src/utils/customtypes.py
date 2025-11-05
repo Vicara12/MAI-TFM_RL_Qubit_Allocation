@@ -53,11 +53,10 @@ class Circuit:
 
 
   def _get_adj_matrices(self) -> torch.Tensor:
-    matrices = torch.eye(self.n_qubits).repeat(self.n_slices,1,1)
+    matrices = torch.zeros(size=(self.n_slices,self.n_qubits,self.n_qubits))
     for s_i, slice in enumerate(self.slice_gates):
       for (a,b) in slice:
         matrices[s_i,a,b] = matrices[s_i,b,a] = 1
-        matrices[s_i,a,a] = matrices[s_i,b,b] = 0
     return matrices
   
   def _get_embedding(self) -> torch.Tensor:

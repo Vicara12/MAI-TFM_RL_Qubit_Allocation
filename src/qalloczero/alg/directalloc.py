@@ -195,6 +195,7 @@ class DirectAllocator:
         f"Number of physical qubits does not match number of qubits in the "
         f"circuit: {hardware.n_qubits} != {circuit.n_qubits}"
       ))
+    self.pred_model.eval()
     circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
     allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
     self._allocate(
@@ -234,7 +235,6 @@ class DirectAllocator:
           opt_cfg=opt_cfg,
           train_cfg=train_cfg,
         )
-        opt_cfg.noise *= train_cfg.noise_decrease_factor
 
         print(f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Running validation...", end='')
         with torch.no_grad():
@@ -244,10 +244,12 @@ class DirectAllocator:
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)
         print((
           f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] "
-          f"loss={cost_loss + vm_loss:.3f} (c={cost_loss:.3f},vm={vm_loss:.3f}) \t"
-          f"vm={frac_valid_moves:.3f} val_cost={avg_cost:.3f} t={self.iter_timer.time:.2f}s "
+          f"l={cost_loss + vm_loss:.1f} (c={cost_loss:.1f},vm={vm_loss:.1f}) \t"
+          f"n={opt_cfg.noise:.3f} vm={frac_valid_moves:.3f} val_cost={avg_cost:.3f} "
+          f"t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
+        opt_cfg.noise *= train_cfg.noise_decrease_factor
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
           if train_cfg.detailed_grad:
             print_grad(self.pred_model)
@@ -323,7 +325,6 @@ class DirectAllocator:
   
 
   def _validation(self, train_cfg: TrainConfig,) -> float:
-    self.pred_model.eval()
     da_cfg = DAConfig()
     norm_costs = []
     for _ in range(train_cfg.validation_size):
