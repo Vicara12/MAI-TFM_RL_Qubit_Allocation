@@ -4,26 +4,17 @@ import torch
 
 
 class EmbedModel(torch.nn.Module):
-  def __init__(self, layer_sizes: List[int], dropout: float):
+  def __init__(self, layer_sizes: List[int]):
     super().__init__()
-    self.layer_sizes = layer_sizes
-    self.layers = torch.nn.ModuleList()
-    same_shape_list = []
+    self.layers = []
     for (prev_sz, next_sz) in zip(layer_sizes[:-1], layer_sizes[1:]):
-      self.layers.append(torch.nn.Sequential(
-        torch.nn.LayerNorm(prev_sz),
-        torch.nn.Linear(prev_sz, next_sz),
-        torch.nn.ReLU(),
-        torch.nn.Dropout(dropout),
-      ))
-      same_shape_list.append(prev_sz == next_sz)
-    self.register_buffer("same_shape", torch.tensor(same_shape_list, dtype=torch.bool))
+      self.layers.append(torch.nn.Linear(prev_sz, next_sz))
+      self.layers.append(torch.nn.ReLU())
+      self.layers.append(torch.nn.LayerNorm(next_sz))
+    self.layers = torch.nn.Sequential(*self.layers)
 
-  
   def forward(self, x):
-    for i, ff in enumerate(self.layers):
-      x = (ff(x) + x) if self.same_shape[i] else ff(x)
-    return x
+    return self.layers(x)
 
 
 
@@ -50,12 +41,11 @@ class PredictionModel(torch.nn.Module):
   def __init__(
       self,
       layers: List[int],
-      dropout: float = 0.1,
   ):
     super().__init__()
     layers = [7] + layers
-    self.ff_key = EmbedModel(layers, dropout)
-    self.ff_query = EmbedModel(layers, dropout)
+    self.ff_key = EmbedModel(layers)
+    self.ff_query = EmbedModel(layers)
     self.output_logits_ = False
 
 

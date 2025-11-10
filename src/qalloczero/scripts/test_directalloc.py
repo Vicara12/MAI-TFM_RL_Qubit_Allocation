@@ -3,6 +3,7 @@ from utils.timer import Timer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
 from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
+from utils.other_utils import save_train_data
 from sampler.randomcircuit import RandomCircuit
 from sampler.hardwaresampler import HardwareSampler
 from qalloczero.alg.ts import ModelConfigs
@@ -81,8 +82,9 @@ def test_direct_alloc():
     allocator = DirectAllocator(
       hardware,
       device='cuda',
-      model_cfg=ModelConfigs(layers=[8,8,16,16,32,32,64,64,64], dropout=0),
+      model_cfg=ModelConfigs(layers=[8,8,16,16,32,32,64,64,64]),
     )
+    save_folder = "trained/direct_allocator"
     # allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
     try:
       train_cfg = DirectAllocator.TrainConfig(
@@ -98,10 +100,11 @@ def test_direct_alloc():
         # print_grad_each=5,
         # detailed_grad=False,
       )
-      allocator.train(train_cfg)
-      allocator.save("trained/direct_allocator", overwrite=False)
+      train_data = allocator.train(train_cfg)
+      save_folder = allocator.save(save_folder, overwrite=False)
+      save_train_data(data=train_data, train_folder=save_folder)
     except KeyboardInterrupt:
       pass
     except Exception:
-      allocator.save("trained/direct_allocator", overwrite=False)
+      allocator.save(save_folder, overwrite=False)
       raise

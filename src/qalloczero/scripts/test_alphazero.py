@@ -3,6 +3,7 @@ from utils.timer import Timer
 from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
 from utils.allocutils import sol_cost, check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
+from utils.other_utils import save_train_data
 from sampler.randomcircuit import RandomCircuit
 from sampler.hardwaresampler import HardwareSampler
 from qalloczero.alg.ts import TSConfig
@@ -248,6 +249,7 @@ def test_alphazero():
       device='cpu',
       backend=AlphaZero.Backend.Cpp,
     )
+    save_dir = "trained/azero"
     try:
       sampler = RandomCircuit(num_lq=n_qubits, num_slices=4)
       train_cfg = AlphaZero.TrainConfig(
@@ -262,10 +264,11 @@ def test_alphazero():
         # print_grad_each=5,
         # detailed_grad=False,
       )
-      azero.train(train_cfg, train_device='cuda')
-      azero.save("trained/azero", overwrite=False)
+      train_data = azero.train(train_cfg, train_device='cuda')
+      save_dir = azero.save(save_dir, overwrite=False)
+      save_train_data(data=train_data, train_folder=save_dir)
     except KeyboardInterrupt:
       pass
     except Exception:
-      azero.save("trained/azero", overwrite=False)
+      azero.save(save_dir, overwrite=False)
       raise

@@ -2,7 +2,7 @@ import torch
 import os
 import json
 import warnings
-from itertools import chain
+from time import time
 from enum import Enum
 from typing import Tuple, Self, List, Optional
 from dataclasses import dataclass
@@ -54,7 +54,7 @@ class AlphaZero:
     self.backend = backend.value(
       device=device,
     )
-    self.pred_model = PredictionModel(layers=model_cfg.layers, dropout=model_cfg.dropout)
+    self.pred_model = PredictionModel(layers=model_cfg.layers)
     self.backend.load_model(self.pred_model)
     self.pred_model.to(device)
 
@@ -65,7 +65,6 @@ class AlphaZero:
       core_conns=self.default_hw.core_connectivity.tolist(),
       backend=self.backend.__class__.__name__,
       layers=self.model_cfg.layers,
-      dropout=self.model_cfg.dropout,
     )
     if os.path.isdir(path):
       warnings.warn(f"provided folder \"{path}\" already exists")
@@ -83,6 +82,7 @@ class AlphaZero:
     with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
     torch.save(self.pred_model.state_dict(), os.path.join(path, "pred_mod.pt"))
+    return path
 
 
   @staticmethod
@@ -95,7 +95,7 @@ class AlphaZero:
     if 'backend' not in params.keys():
       params["backend"] = 'TSCppEngine'
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
-    model_cfg = ModelConfigs(layers=params['layers'], dropout=params['dropout'])
+    model_cfg = ModelConfigs(layers=params['layers'])
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
     loaded = AlphaZero(default_hardware=hardware, device=device, backend=backend, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
@@ -212,7 +212,7 @@ class AlphaZero:
     self,
     train_cfg: TrainConfig,
     train_device: str = '',
-  ):
+  ) -> dict[str, list]:
     if not train_device:
       train_device = self.device
     self.timer = Timer.get("_optimizer_timer")
@@ -225,6 +225,13 @@ class AlphaZero:
     )
     self.pgrad_counter = 1
     hardware = self.default_hw
+
+    data_log = dict(
+      loss = [],
+      noise = [],
+      cost = [],
+      t = []
+    )
 
     try:
       for iter in range(train_cfg.train_iters):
@@ -281,6 +288,11 @@ class AlphaZero:
           f" + Updated models: t={self.timer.time:.2f} loss={avg_loss/n_iters:.4f}"
         ))
 
+        data_log['loss'].append(avg_loss.item())
+        data_log['noise'].append(train_cfg.ts_cfg.noise)
+        data_log['cost'].append((sum(costs)/len(costs)).item())
+        data_log['t'].append(time())
+
         train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor
         train_cfg.ts_cfg.noise = max(train_cfg.ts_cfg.noise, train_cfg.minimum_noise)
         self.backend.replace_model(self.pred_model)
@@ -298,9 +310,12 @@ class AlphaZero:
           self.pgrad_counter = 1
         else:
           self.pgrad_counter += 1
+
     except KeyboardInterrupt as e:
       if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
         raise e
+    
+    return data_log
   
 
   def _move_train_data(self, tdata, train_device) -> Tuple[torch.Tensor, ...]:

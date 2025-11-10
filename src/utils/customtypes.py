@@ -1,6 +1,9 @@
-from typing import TypeAlias, Tuple, Union
+from __future__ import annotations
+from typing import TypeAlias, Tuple
 import torch
+from collections import defaultdict
 from dataclasses import dataclass
+from qiskit.circuit import QuantumCircuit
 
 
 GateType: TypeAlias = Tuple[int,int]
@@ -12,6 +15,41 @@ CircSliceType: TypeAlias = Tuple[GateType, ...]
 class Circuit:
   slice_gates: Tuple[CircSliceType, ...]
   n_qubits: int
+
+
+  @staticmethod
+  def from_qasm(qasm_file: str) -> Circuit:
+    circuit = QuantumCircuit.from_qasm_file(qasm_file)
+    n_qubits = circuit.num_qubits
+    gates = [tuple(circuit.find_bit(q)[0] for q in ins.qubits) for ins in circuit if len(ins.qubits) == 2]
+    return Circuit.from_gate_list(gates)
+
+
+  @staticmethod
+  def from_gate_list(gates: list[tuple[int,int]]) -> Circuit:
+    slices = defaultdict(list)
+    used_qubits = defaultdict(set)
+    
+    def add_gate(gate_id, t):
+      q_set = set(gates[gate_id])
+      if used_qubits[t].intersection(q_set):
+        t += 1
+        slices[t].append(gate_id)
+        used_qubits[t] |= q_set
+        return
+      if t == 0:
+        slices[t].append(gate_id)
+        used_qubits[t] |= q_set
+        return
+      add_gate(gate_id, t-1)
+        
+    for g in range(len(gates)):
+      add_gate(g, len(slices))
+    
+    slice_gates = tuple(tuple(gates[id] for id in slice_ids) for slice_ids in slices.values())
+    n_qubits = max(max(g) for g in gates)
+    return Circuit(slice_gates=slice_gates, n_qubits=n_qubits)
+
 
   # Some more attribute declarations that are only computed when required (lazy
   # initialization), as these can be expensive to compute and not always needed

@@ -30,7 +30,6 @@ class TSTrainData:
 @dataclass
 class ModelConfigs:
     layers: List[int] = field(default_factory=lambda: [16, 32, 64])
-    dropout: float = 0.1
 
 
 class TSEngine(ABC):

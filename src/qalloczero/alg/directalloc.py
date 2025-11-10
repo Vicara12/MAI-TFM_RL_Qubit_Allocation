@@ -2,7 +2,7 @@ import os
 import json
 import torch
 import warnings
-from itertools import chain
+from time import time
 from typing import Self, Tuple, Optional
 from dataclasses import dataclass
 from utils.customtypes import Circuit, Hardware
@@ -48,7 +48,7 @@ class DirectAllocator:
   ):
     self.default_hw = default_hardware
     self.model_cfg = model_cfg
-    self.pred_model = PredictionModel(layers=model_cfg.layers, dropout=model_cfg.dropout)
+    self.pred_model = PredictionModel(layers=model_cfg.layers)
     self.pred_model.to(device)
   
 
@@ -62,7 +62,6 @@ class DirectAllocator:
       core_caps=self.default_hw.core_capacities.tolist(),
       core_conns=self.default_hw.core_connectivity.tolist(),
       layers=self.model_cfg.layers,
-      dropout=self.model_cfg.dropout,
     )
     if os.path.isdir(path):
       warnings.warn(f"provided folder \"{path}\" already exists")
@@ -80,6 +79,7 @@ class DirectAllocator:
     with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
     torch.save(self.pred_model.state_dict(), os.path.join(path, "pred_mod.pt"))
+    return path
 
 
   @staticmethod
@@ -89,7 +89,7 @@ class DirectAllocator:
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
     hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
-    model_cfg = ModelConfigs(layers=params['layers'], dropout=params['dropout'])
+    model_cfg = ModelConfigs(layers=params['layers'])
     loaded = DirectAllocator(default_hardware=hardware, device=device, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
       torch.load(
@@ -214,7 +214,7 @@ class DirectAllocator:
   def train(
     self,
     train_cfg: TrainConfig,
-  ):
+  ) -> dict[str, list]:
     self.iter_timer = Timer.get("_train_iter_timer")
     self.iter_timer.reset()
     optimizer = torch.optim.Adam(
@@ -227,6 +227,16 @@ class DirectAllocator:
     )
     self.pgrad_counter = 1
     hardware = self.default_hw
+
+    data_log = dict(
+      loss = [],
+      cost_loss = [],
+      penalization_loss = [],
+      noise = [],
+      valid_moves = [],
+      validation_cost = [],
+      t = []
+    )
 
     try:
       for iter in range(train_cfg.train_iters):
@@ -256,6 +266,15 @@ class DirectAllocator:
           f"t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
+        
+        data_log['loss'].append(cost_loss + vm_loss)
+        data_log['cost_loss'].append(cost_loss)
+        data_log['penalization_loss'].append(vm_loss)
+        data_log['noise'].append(opt_cfg.noise)
+        data_log['valid_moves'].append(frac_valid_moves)
+        data_log['validation_cost'].append(avg_cost)
+        data_log['t'].append(time())
+
         opt_cfg.noise *= train_cfg.noise_decrease_factor
         if train_cfg.print_grad_each is not None and self.pgrad_counter == train_cfg.print_grad_each:
           if train_cfg.detailed_grad:
@@ -266,10 +285,10 @@ class DirectAllocator:
         else:
           self.pgrad_counter += 1
 
-
     except KeyboardInterrupt as e:
       if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
         raise e
+    return data_log
   
 
   def _train_batch(
