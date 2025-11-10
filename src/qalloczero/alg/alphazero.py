@@ -7,10 +7,10 @@ from enum import Enum
 from typing import Tuple, Self, List, Optional
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from sampler.hardwaresampler import HardwareSampler
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit, Hardware
 from utils.gradient_tools import print_grad_stats, print_grad
-from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
 from qalloczero.alg.ts import TSConfig, TSTrainData, ModelConfigs
 from qalloczero.alg.ts_python import TSPythonEngine
@@ -32,9 +32,11 @@ class AlphaZero:
     batch_size: int # Number of optimized circuits per batch
     noise_decrease_factor: int
     n_data_augs: int
-    sampler: CircuitSampler
+    circ_sampler: CircuitSampler
     lr: float
     ts_cfg: TSConfig
+    minimum_noise: float = 0.2
+    hardware_sampler: Optional[HardwareSampler] = None
     print_grad_each: Optional[int] = None
     detailed_grad: bool = False
 
@@ -157,8 +159,8 @@ class AlphaZero:
           work,
           self,
           n_qubits=circuits[i].n_qubits,
-          core_caps=self.default_hw.core_capacities,
-          core_conns=self.default_hw.core_connectivity,
+          core_caps=hardware.core_capacities,
+          core_conns=hardware.core_connectivity,
           circuit_embs=circuits[i].embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
@@ -184,7 +186,7 @@ class AlphaZero:
       allocations, exp_nodes, expl_ratio, tdata = azero.backend.optimize(**kwargs)
       norm_cost = sol_cost(allocations, hardware.core_connectivity)/kwargs['alloc_steps'][0][3]
       return norm_cost, expl_ratio, tdata
-
+    
     with ThreadPoolExecutor(max_workers=len(circuits)) as executor:
       # A dictionary of future : i so that we are able to map results to input circuits later on
       future_map = {
@@ -192,8 +194,8 @@ class AlphaZero:
           work,
           self,
           n_qubits=circuits[i].n_qubits,
-          core_caps=self.default_hw.core_capacities,
-          core_conns=self.default_hw.core_connectivity,
+          core_caps=hardware.core_capacities,
+          core_conns=hardware.core_connectivity,
           circuit_embs=circuits[i].embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
@@ -222,19 +224,24 @@ class AlphaZero:
       self.pred_model.parameters(), lr=train_cfg.lr
     )
     self.pgrad_counter = 1
+    hardware = self.default_hw
 
     try:
       for iter in range(train_cfg.train_iters):
+        if train_cfg.hardware_sampler is not None:
+          hardware = train_cfg.hardware_sampler.sample()
+          print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
+        train_cfg.circ_sampler.num_lq = hardware.n_qubits
         self.iter_timer.start()
         print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")
         self.pred_model.eval()
         self.pred_model.to(self.device)
-        circuits = [train_cfg.sampler.sample() for _ in range(train_cfg.batch_size)]
+        circuits = [train_cfg.circ_sampler.sample() for _ in range(train_cfg.batch_size)]
         costs = []
         avg_expl_r = 0
         train_data = []
         with self.timer:
-          results = self._optimize_mult_train(circuits, self.default_hw, train_cfg.ts_cfg)
+          results = self._optimize_mult_train(circuits, hardware, train_cfg.ts_cfg)
         for (cost, er, tdata) in results:
           costs.append(cost)
           avg_expl_r += er
@@ -245,7 +252,7 @@ class AlphaZero:
         ))
         
         avg_loss = 0
-        core_cons = self.default_hw.core_connectivity.to(train_device)
+        core_cons = hardware.core_connectivity.to(train_device)
         with self.timer:
           self.pred_model.train()
           self.pred_model.output_logits(True)
@@ -275,6 +282,7 @@ class AlphaZero:
         ))
 
         train_cfg.ts_cfg.noise *= train_cfg.noise_decrease_factor
+        train_cfg.ts_cfg.noise = max(train_cfg.ts_cfg.noise, train_cfg.minimum_noise)
         self.backend.replace_model(self.pred_model)
         self.iter_timer.stop()
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)
@@ -304,11 +312,3 @@ class AlphaZero:
     ref_logits = tdata.logits.to(train_device)
     ref_values = tdata.value.to(train_device)
     return qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, ref_values
-  
-
-  def _perm_qubits(self, qubits, device) -> Tuple[torch.Tensor, torch.Tensor]:
-    perm = torch.randperm(self.default_hw.n_qubits, dtype=torch.int, device=device)
-    qubit_mask = qubits != -1
-    perm_qubits = qubits.clone()
-    perm_qubits[qubit_mask] = perm[qubits[qubit_mask]]
-    return perm, perm_qubits

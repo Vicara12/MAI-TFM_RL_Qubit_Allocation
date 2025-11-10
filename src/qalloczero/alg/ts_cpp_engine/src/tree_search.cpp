@@ -480,13 +480,11 @@ auto TreeSearch::ucb(
 ) const -> float {
   float rem_gates = ctx.alloc_steps_[node->alloc_step][3].item<float>();
   float q_v = (node->get_child(action)->value() + node->action_cost(action)) / (rem_gates+1);
-  float q_inv = 2.0 / (1.0 + q_v) - 1;
   float prob_a = (*node->policy)[action].item<float>();
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
-  float uncert = prob_a * std::sqrt(vc) / (1 + vc_act)
-                  * (ctx.cfg_.ucb_c1 + std::log(vc + ctx.cfg_.ucb_c2 + 1)/ctx.cfg_.ucb_c2);
-  return q_inv + uncert;
+  float ucb = prob_a * std::sqrt(vc) / (1 + vc_act) * ctx.cfg_.ucb_c1;
+  return q_v - ucb;
 }
 
 
@@ -494,15 +492,15 @@ auto TreeSearch::select_child(
   const OptCtx &ctx,
   std::shared_ptr<const Node> current_node
 ) const -> std::tuple<std::shared_ptr<Node>, int> {
-  double max_ucb = -std::numeric_limits<double>::infinity();
+  double min_ucb = std::numeric_limits<double>::infinity();
   int best_action = -1;
 
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(ctx, current_node, action);
     assert(not std::isnan(ucb_value));
     assert(not std::isinf(ucb_value));
-    if (ucb_value > max_ucb) {
-      max_ucb = ucb_value;
+    if (ucb_value < min_ucb) {
+      min_ucb = ucb_value;
       best_action = action;
     }
   }

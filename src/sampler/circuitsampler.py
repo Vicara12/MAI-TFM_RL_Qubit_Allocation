@@ -14,6 +14,11 @@ class CircuitSampler(ABC):
     return self.num_lq_
   
 
+  @num_lq.setter
+  def num_lq(self, n: int):
+    self.num_lq_ = n
+  
+
   @abstractmethod
   def sample(self) -> Circuit:
     ''' Function that takes no arguments and returns a problem sample.

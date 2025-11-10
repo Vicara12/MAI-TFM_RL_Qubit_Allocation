@@ -13,24 +13,23 @@ def validate():
   n_qubits = 16
   n_slices = 32
   n_circuits = 16
-  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
+  core_caps = torch.tensor([4]*4, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    da_trained = DirectAllocator.load("trained/direct_allocator", device="cuda"),
-    azero_trained =    AlphaZero.load("trained/direct_allocator", device="cpu"),
-    da_azero = DirectAllocator.load("trained/azero", device="cuda"),
-    azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
-
+    da_trained = DirectAllocator.load("trained/azero", device="cuda"),
+    azero_trained =    AlphaZero.load("trained/azero", device="cpu"),
+    # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
+    # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )
   cfg = TSConfig(
     target_tree_size=512,
-    noise=0.40,
+    noise=0.10,
     dirichlet_alpha=0.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.005,
+    ucb_c1=0.2,
     ucb_c2=500,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
@@ -42,9 +41,9 @@ def validate():
       if isinstance(algo, DirectAllocator):
         results = []
         for circ in circuits:
-          results.append(algo.optimize(circ))
+          results.append(algo.optimize(circ, hardware=hardware))
       elif isinstance(algo, AlphaZero):
-        results = algo.optimize_mult(circuits, cfg)
+        results = algo.optimize_mult(circuits, cfg, hardware=hardware)
       else:
         raise Exception("Unrecognized algorithm type")
     norm_res = [res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)]

@@ -9,9 +9,9 @@ from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost
 from utils.timer import Timer
 from utils.gradient_tools import print_grad, print_grad_stats
+from sampler.hardwaresampler import HardwareSampler
 from sampler.circuitsampler import CircuitSampler
 from qalloczero.alg.ts import ModelConfigs
-from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
 
 
@@ -32,9 +32,10 @@ class DirectAllocator:
     validation_size: int
     initial_noise: float
     noise_decrease_factor: int
-    sampler: CircuitSampler
+    circ_sampler: CircuitSampler
     lr: float
     invalid_move_penalty: float
+    hardware_sampler: Optional[HardwareSampler] = None
     print_grad_each: Optional[int] = None
     detailed_grad: bool = False
 
@@ -225,20 +226,26 @@ class DirectAllocator:
       greedy=False,
     )
     self.pgrad_counter = 1
+    hardware = self.default_hw
 
     try:
       for iter in range(train_cfg.train_iters):
+        if train_cfg.hardware_sampler is not None:
+          hardware = train_cfg.hardware_sampler.sample()
+          print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
+        train_cfg.circ_sampler.num_lq = hardware.n_qubits
         self.iter_timer.start()
         frac_valid_moves, cost_loss, vm_loss = self._train_batch(
           iter=iter,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
           train_cfg=train_cfg,
+          hardware=hardware,
         )
 
         print(f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Running validation...", end='')
         with torch.no_grad():
-          avg_cost = self._validation(train_cfg=train_cfg)
+          avg_cost = self._validation(train_cfg=train_cfg, hardware=hardware)
 
         self.iter_timer.stop()
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - iter - 1)
@@ -271,11 +278,12 @@ class DirectAllocator:
     optimizer: torch.optim.Optimizer,
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
+    hardware: Hardware
   ) -> float:
     self.pred_model.train()
     cost_loss = 0
     valid_move_loss = 0
-    circuit = train_cfg.sampler.sample()
+    circuit = train_cfg.circ_sampler.sample()
     circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
     all_costs = []
     action_log_probs = []
@@ -292,10 +300,10 @@ class DirectAllocator:
         circ_embs=circ_embs,
         alloc_steps=circuit.alloc_steps,
         cfg=opt_cfg,
-        hardware=self.default_hw,
+        hardware=hardware,
         ret_train_data=True,
       )
-      cost = sol_cost(allocations=allocations, core_con=self.default_hw.core_connectivity)
+      cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
       all_costs.append(cost/(circuit.n_gates_norm + 1))
       valid_moves.append(valid_cores[torch.arange(valid_cores.shape[0]), actions])
       action_log_probs.append(log_probs[torch.arange(log_probs.shape[0]), actions])
@@ -324,11 +332,11 @@ class DirectAllocator:
     return n_valid_moves/total_moves, cost_loss.item(), valid_move_loss.item()
   
 
-  def _validation(self, train_cfg: TrainConfig,) -> float:
+  def _validation(self, train_cfg: TrainConfig, hardware: Hardware) -> float:
     da_cfg = DAConfig()
     norm_costs = []
     for _ in range(train_cfg.validation_size):
-      circ = train_cfg.sampler.sample()
-      cost = self.optimize(circ, cfg=da_cfg)[1]/(circ.n_gates_norm + 1)
+      circ = train_cfg.circ_sampler.sample()
+      cost = self.optimize(circ, cfg=da_cfg, hardware=hardware)[1]/(circ.n_gates_norm + 1)
       norm_costs.append(cost)
     return sum(norm_costs)/len(norm_costs)

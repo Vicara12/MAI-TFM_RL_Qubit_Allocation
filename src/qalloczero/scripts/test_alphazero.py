@@ -4,22 +4,12 @@ from utils.customtypes import Hardware
 from utils.plotter import drawQubitAllocation
 from utils.allocutils import sol_cost, check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
 from sampler.randomcircuit import RandomCircuit
+from sampler.hardwaresampler import HardwareSampler
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.ts_python import TSPythonEngine
 from qalloczero.alg.ts_cpp import TSCppEngine
 from qalloczero.alg.alphazero import AlphaZero
-from qalloczero.models.enccircuit import CircuitEncoder
 from qalloczero.models.predmodel import PredictionModel
-
-
-def testing_circuit_enc():
-  sampler = RandomCircuit(num_lq=4, num_slices=3)
-  cs = [sampler.sample().adj_matrices.unsqueeze(0) for _ in range(2)]
-  encoder = CircuitEncoder(n_qubits=4, n_heads=4, n_layers=4)
-  encoder.eval()
-  embs = [encoder(m) for m in cs]
-  embs_b = encoder(torch.vstack(cs))
-  print(torch.equal(torch.vstack(embs), embs_b))
 
 
 def testing_pred_model():
@@ -69,7 +59,7 @@ def testing_pred_model():
      [0,0,0,1],
      [0,0,1,0]],
   ])
-  circ_enc = CircuitEncoder(n_qubits=4, n_heads=0, n_layers=0)
+  circ_enc = None # CircuitEncoder(n_qubits=4, n_heads=0, n_layers=0)
   circuit_emb = circ_enc(slice_adj_mat.unsqueeze(0))[0]
   
   probs_batched, vals_batched = pred_model(
@@ -119,7 +109,7 @@ def test_cpp_engine():
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuit = sampler.sample()
   print(f"{circuit.slice_gates = }")
-  encoder = CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
+  encoder = None # CircuitEncoder(n_qubits=n_qubits, n_heads=4, n_layers=4)
   encoder.eval()
   params = dict(
     n_qubits=n_qubits,
@@ -175,6 +165,7 @@ def test_alphazero():
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
+  hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
   # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
   # azero = AlphaZero(
   #   hardware,
@@ -243,12 +234,12 @@ def test_alphazero():
   
   if test_train:
     cfg = TSConfig(
-      target_tree_size=256,
+      target_tree_size=512,
       noise=1,
-      dirichlet_alpha=0.0,
+      dirichlet_alpha=0.25,
       discount_factor=0.0,
       action_sel_temp=0,
-      ucb_c1=0.005,
+      ucb_c1=0.2,
       ucb_c2=500,
     )
     # azero = AlphaZero.load("trained/azero_finetune", device="cpu")
@@ -260,12 +251,13 @@ def test_alphazero():
     try:
       sampler = RandomCircuit(num_lq=n_qubits, num_slices=4)
       train_cfg = AlphaZero.TrainConfig(
-        train_iters=2_000,
+        train_iters=1_000,
         batch_size=16,
         n_data_augs=1,
-        sampler=sampler,
+        circ_sampler=sampler,
+        hardware_sampler=hardware_sampler,
         noise_decrease_factor=0.975,
-        lr=1e-5,
+        lr=5e-5,
         ts_cfg=cfg,
         # print_grad_each=5,
         # detailed_grad=False,
