@@ -148,11 +148,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -168,14 +168,14 @@ def test_alphazero():
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
   # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
-  # azero = AlphaZero(
-  #   hardware,
-  #   device='cpu',
-  #   backend=AlphaZero.Backend.Cpp,
-  # )
+  azero = AlphaZero(
+    hardware,
+    device='cpu',
+    backend=AlphaZero.Backend.Cpp,
+  )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
-    target_tree_size=1024,
+    target_tree_size=64,
     noise=0.00,
     dirichlet_alpha=0.7,
     discount_factor=0.0,
@@ -188,13 +188,13 @@ def test_alphazero():
     cfg = TSConfig(
       target_tree_size=2048,
       noise=0.70,
-      dirichlet_alpha=0.0,
+      dirichlet_alpha=1.0,
       discount_factor=0.0,
       action_sel_temp=0,
       ucb_c1=0.05,
       ucb_c2=500,
     )
-    azero = AlphaZero.load("trained/direct_allocator", device="cpu")
+    # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
@@ -203,7 +203,7 @@ def test_alphazero():
     n_swaps = count_swaps(swaps)
     check_sanity_swap(allocs, swaps)
     print(f"t={Timer.get('t').time:.2f}s c={cost/circuit.n_gates_norm:.3f} er={er:.3f} sw={n_swaps} ({n_swaps/circuit.n_gates_norm:.3f})")
-    drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
+    # drawQubitAllocation(allocs, core_caps, circuit.slice_gates, file_name="allocation.svg")
     # torch.manual_seed(42)
     # with Timer.get('t'):
     #   allocs, cost, _, _ = azero_loaded.optimize(circuit, cfg, verbose=True)

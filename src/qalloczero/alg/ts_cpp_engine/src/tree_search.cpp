@@ -483,8 +483,8 @@ auto TreeSearch::ucb(
   float prob_a = (*node->policy)[action].item<float>();
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
-  float ucb = prob_a * std::sqrt(vc) / (1 + vc_act) * ctx.cfg_.ucb_c1;
-  return q_v - ucb;
+  float ucb = prob_a * std::sqrt(vc) / (1 + vc_act);
+  return q_v - ctx.cfg_.ucb_c1 * ucb;
 }
 
 

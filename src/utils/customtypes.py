@@ -1,9 +1,11 @@
 from __future__ import annotations
-from typing import TypeAlias, Tuple
+from typing import TypeAlias, Tuple, Optional
 import torch
 from collections import defaultdict
 from dataclasses import dataclass
 from qiskit.circuit import QuantumCircuit
+
+from input import IGraph
 
 
 GateType: TypeAlias = Tuple[int,int]
@@ -20,13 +22,19 @@ class Circuit:
   @staticmethod
   def from_qasm(qasm_file: str) -> Circuit:
     circuit = QuantumCircuit.from_qasm_file(qasm_file)
-    n_qubits = circuit.num_qubits
-    gates = [tuple(circuit.find_bit(q)[0] for q in ins.qubits) for ins in circuit if len(ins.qubits) == 2]
-    return Circuit.from_gate_list(gates)
+    igraph = IGraph(qc=circuit)
+    gates = []
+    for ins in circuit:
+      qubits = tuple(circuit.find_bit(q)[0] for q in ins.qubits)
+      if len(qubits) == 2:
+        gates.append(qubits)
+      elif len(qubits) > 2 and ins.name != 'barrier':
+        raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
+    return Circuit.from_gate_list(gates, circuit.num_qubits)
 
 
   @staticmethod
-  def from_gate_list(gates: list[tuple[int,int]]) -> Circuit:
+  def from_gate_list(gates: list[tuple[int,int]], n_qubits: Optional[int] = None) -> Circuit:
     slices = defaultdict(list)
     used_qubits = defaultdict(set)
     
@@ -36,18 +44,18 @@ class Circuit:
         t += 1
         slices[t].append(gate_id)
         used_qubits[t] |= q_set
-        return
-      if t == 0:
+      elif t == 0:
         slices[t].append(gate_id)
         used_qubits[t] |= q_set
-        return
-      add_gate(gate_id, t-1)
+      else:
+        add_gate(gate_id, t-1)
         
     for g in range(len(gates)):
       add_gate(g, len(slices))
     
     slice_gates = tuple(tuple(gates[id] for id in slice_ids) for slice_ids in slices.values())
-    n_qubits = max(max(g) for g in gates)
+    if n_qubits is None:
+      n_qubits = max(max(g) for g in gates)
     return Circuit(slice_gates=slice_gates, n_qubits=n_qubits)
 
 

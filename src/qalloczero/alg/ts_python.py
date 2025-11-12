@@ -38,12 +38,8 @@ class TSPythonEngine(TSEngine):
 
   def __init__(
     self,
-    n_qubits: int,
-    n_cores: int,
     device: str = "cpu"
   ):
-    self.n_qubits = n_qubits
-    self.n_cores = n_cores
     self.device = device
     self.pred_model = None
     
@@ -66,7 +62,6 @@ class TSPythonEngine(TSEngine):
     n_qubits: int,
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
-    slice_adjm: torch.Tensor,
     circuit_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
@@ -74,7 +69,7 @@ class TSPythonEngine(TSEngine):
     verbose: bool = False,
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
     allocs, tdata = self._init_opt(
-      core_conns, core_caps, slice_adjm, circuit_embs, alloc_steps, cfg, ret_train_data)
+      core_conns, core_caps, circuit_embs, alloc_steps, cfg, ret_train_data)
     n_expanded_nodes = 0
 
     for step in range(self.n_steps):
@@ -83,7 +78,7 @@ class TSPythonEngine(TSEngine):
       qubit1 = self.alloc_steps[self.root.allocation_step][2].item()
 
       if verbose:
-        print(f" - Optimization step {step+1}/{self.n_steps}")
+        print(f"\033[2K\r - Optimization step {step+1}/{self.n_steps}")
 
       if ret_train_data:
         self._store_train_data(tdata, step, slice_idx, qubit0, qubit1)
@@ -141,19 +136,19 @@ class TSPythonEngine(TSEngine):
     self,
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
-    slice_adjm: torch.Tensor,
     circuit_embs: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
     ret_train_data: bool
   ) -> Tuple[torch.Tensor, TSTrainData]:
+    self.n_cores = core_conns.shape[0]
     self.core_conns = core_conns.to(self.device)
     self.core_caps = core_caps.to(self.device)
-    self.slice_adjm = slice_adjm.to(self.device)
     self.circuit_embs = circuit_embs.to(self.device)
     self.alloc_steps = alloc_steps
     self.cfg = cfg
-    self.n_slices = slice_adjm.shape[0]
+    self.n_qubits = circuit_embs.shape[-1]
+    self.n_slices = circuit_embs.shape[0]
     self.n_steps = alloc_steps.shape[0]
     self.root = self.__buildRoot()
     allocs = torch.empty([self.n_slices, self.n_qubits], dtype=torch.int)
@@ -208,14 +203,13 @@ class TSPythonEngine(TSEngine):
   def __getNewPolicyAndValue(self, node: Node) -> Tuple[torch.Tensor, torch.Tensor]:
     if node.terminal:
       return None, 0
-    pol, v_norm = self.pred_model(
+    pol, v_norm, _ = self.pred_model(
       qubits=self.alloc_steps[node.allocation_step][(1,2),].to(self.device).unsqueeze(0),
       prev_core_allocs=node.prev_allocs.unsqueeze(0),
       current_core_allocs=node.current_allocs.unsqueeze(0),
       core_capacities=node.core_caps.unsqueeze(0),
       core_connectivity=self.core_conns,
       circuit_emb=self.circuit_embs[node.current_slice].unsqueeze(0),
-      slice_adj_mat=self.slice_adjm[node.current_slice].unsqueeze(0),
     )
     pol = pol.squeeze(0)
     v_norm = v_norm.item()
@@ -230,13 +224,7 @@ class TSPythonEngine(TSEngine):
     valid_cores = (node.core_caps >= n_qubits)
     pol[~valid_cores] = 0
     sum_pol = sum(pol)
-    if sum_pol < 1e-5:
-      pol = torch.zeros_like(pol)
-      n_valid_cores = sum(valid_cores)
-      assert n_valid_cores > 0, "No valid allocation possible"
-      pol[valid_cores] = 1/n_valid_cores
-    else:
-      pol /= sum_pol
+    pol /= sum_pol
     return pol, v
   
 
@@ -308,10 +296,13 @@ class TSPythonEngine(TSEngine):
 
 
   def __backprop(self, search_path: List[Tuple[Node, int]]):
-    search_path[-1][0].visit_count += 1
+    # Terminal nodes need to be updated because at the last alloc we need to know visit count
+    if search_path[-1][0].terminal:
+      search_path[-1][0].visit_count += 1
     # Reverse list order and pair items. For example [0,1,2,3] -> ((2,3), (1,2), (0,1))
     for node, next_node in zip(search_path[-2::-1], search_path[:0:-1]):
-      node[0].value_sum += next_node[0].value + node[0].children[next_node[1]][1]
+      action_cost = node[0].children[next_node[1]][1]
+      node[0].value_sum += action_cost + (1 - self.cfg.discount_factor) * next_node[0].value
       node[0].visit_count += 1
   
   
@@ -320,12 +311,13 @@ class TSPythonEngine(TSEngine):
 
     For a nicely formatted version of this formula refer to Appendix B in Ref. [1]
     '''
-    return (node.children[action][0].value + node.children[action][1]) - \
-           node.policy[action]*sqrt(node.visit_count)/(1+node.children[action][0].visit_count) * \
-              (self.cfg.ucb_c1 + log((node.visit_count + self.cfg.ucb_c2 + 1)/self.cfg.ucb_c2))
+    rem_gates = self.alloc_steps[node.allocation_step][3].item()
+    q_v = (node.children[action][0].value + node.children[action][1])/(rem_gates + 1)
+    ucb = node.policy[action]*sqrt(node.visit_count)/(1+node.children[action][0].visit_count)
+    return q_v - self.cfg.ucb_c1 * ucb
 
   
   def __selectChild(self, current_node: Node) -> Tuple[Node, int]:
     ucbs = list((self.__UCB(current_node, a).item(), a) for a in current_node.children.keys())
-    (_, action) = min((self.__UCB(current_node, a), a) for a in current_node.children.keys())
+    (_, action) = min(ucbs)
     return current_node.children[action][0], action

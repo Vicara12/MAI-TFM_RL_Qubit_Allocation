@@ -13,15 +13,20 @@ if __name__ == '__main__':
   #   file_name = 'example.svg',
   # )
 
-  for name in [
-    # 'qft', # Gates ok, number of slices different but small
-    # "quantum_volume", # Does not fit, unknown but small
-    # 'graph_state', # Exact
-    'drapper_adder', # VERY different -------------------
-    'cuccaro_adder', # Different ------------------
-    'qnn', # Massive difference ----------------------
-    # 'deutsch_jozsa' # Exact
-    ]:
-    for nqubits in [50,100]:
-      circuit = Circuit.from_qasm(f'circuits/{name}_{nqubits}.qasm')
-      print(f"{name} {nqubits}: {circuit.n_slices} slices and {circuit.n_gates} gates")
+  russo = dict(
+    # qft=(99,197,1225,4950), # Exact
+    quantum_volume=(50,100,1226,4961),
+    # graph_state=(83,166,596,2449), # Exact
+    drapper_adder=(120,245,925,3725),
+    cuccaro_adder=(290,590,336,686), # A bit over
+    qnn=(195,395,2498,9998),
+    # deutsch_jozsa=(49,99,49,99), # Exact
+  )
+
+  for name, (s50, s100, g50, g100) in russo.items():
+    circuit50 = Circuit.from_qasm(f'circuits/{name}_50.qasm')
+    circuit100 = Circuit.from_qasm(f'circuits/{name}_100.qasm')
+    print(f"{name}\n"
+          f"   50: {circuit50.n_slices}|{s50} slices and {circuit50.n_gates}|{g50} gates\n"
+          f"   100: {circuit100.n_slices}|{s100} slices and {circuit100.n_gates}|{g100} gates\n"
+    )
