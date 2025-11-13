@@ -6,6 +6,7 @@ from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.directalloc import DirectAllocator
+from russo.tests.hungarian import HQA
 
 
 def validate():
@@ -18,8 +19,9 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
+    hqa = HQA(lookahead=True),
     da_trained = DirectAllocator.load("trained/da_v3", device="cuda"),
-    azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
+    # azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )
@@ -37,7 +39,7 @@ def validate():
   for (name, algo) in algos.items():
     print(f"[*] Optimizing {name}")
     with Timer.get('t'):
-      if isinstance(algo, DirectAllocator):
+      if isinstance(algo, DirectAllocator) or isinstance(algo, HQA):
         results = []
         for circ in circuits:
           results.append(algo.optimize(circ, hardware=hardware))

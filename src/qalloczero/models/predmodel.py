@@ -10,7 +10,7 @@ class EmbedModel(torch.nn.Module):
     for (prev_sz, next_sz) in zip(layer_sizes[:-1], layer_sizes[1:]):
       self.layers.append(torch.nn.Linear(prev_sz, next_sz))
       self.layers.append(torch.nn.ReLU())
-      self.layers.append(torch.nn.LayerNorm(next_sz))
+    self.layers.append(torch.nn.LayerNorm(layer_sizes[-1]))
     self.layers = torch.nn.Sequential(*self.layers)
 
   def forward(self, x):
@@ -94,7 +94,6 @@ class PredictionModel(torch.nn.Module):
     Q: int,
     device: torch.device
   ) -> torch.Tensor:
-    # TODO improve
     (B,C) = core_capacities.shape
     core_caps = 1/(core_capacities + 1)
     core_caps = core_caps.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
@@ -120,7 +119,6 @@ class PredictionModel(torch.nn.Module):
     swap_cost[double_qubits] += core_connectivity[prev_cores,:]
     swap_cost = 1/(swap_cost + 1)
     swap_cost = swap_cost.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
-    # TODO improve
     return swap_cost
 
 
@@ -212,7 +210,7 @@ class PredictionModel(torch.nn.Module):
     (B,C,Q,H) = key_embs.shape
     projs_q0 = torch.bmm(key_embs.reshape(B*C,Q,H), q0_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
     projs_q1 = torch.bmm(key_embs.reshape(B*C,Q,H), q1_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
-    return (projs_q0 + projs_q1) / torch.sqrt(torch.tensor(H))
+    return (projs_q0, projs_q1) / torch.sqrt(torch.tensor(H))
 
 
   def forward(
@@ -255,7 +253,7 @@ class PredictionModel(torch.nn.Module):
       qubits, prev_core_allocs, current_core_allocs, core_capacities, core_connectivity, circuit_emb)
     key_embs, q0_embs, q1_embs = self._get_embeddings(inputs, qubits)
     projs = self._project(key_embs, q0_embs, q1_embs) # [B,C,Q]
-    logits = projs.max(dim=-1)[0] # [B,C]
+    logits = projs.sum(dim=-1) # [B,C]
     vals = torch.tensor([[1.22] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:

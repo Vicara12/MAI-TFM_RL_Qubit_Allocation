@@ -98,7 +98,7 @@ def train_model_da(architecture: list[int], name: str):
   save_folder = f"trained/{name}"
   try:
     train_cfg = DirectAllocator.TrainConfig(
-      train_iters=1_500,
+      train_iters=2_500,
       batch_size=8,
       validation_size=20,
       initial_noise=0.4,
@@ -213,10 +213,10 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  # train_model_da(architecture=[8,8,16,16,32,32], name="da")
+  train_model_da(architecture=[8,16,32], name="da")
 
   ''' Benchmark with real circuits using Direct Allocation '''
-  benchmark_da("trained/da_v3")
+  # benchmark_da("trained/da_v3")
 
   ''' Benchmark with real circuits using AlphaZero '''
   # benchmark_azero("trained/da_v3")

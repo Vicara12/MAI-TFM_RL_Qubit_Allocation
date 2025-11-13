@@ -336,7 +336,6 @@ class DirectAllocator:
 
     valid_move_loss *= train_cfg.invalid_move_penalty
     loss = cost_loss + valid_move_loss
-    # loss = cost_loss # TODO remove and set loss as sum
     optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
