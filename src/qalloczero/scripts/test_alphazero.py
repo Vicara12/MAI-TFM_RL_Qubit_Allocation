@@ -167,12 +167,12 @@ def test_alphazero():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
-  # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
-  azero = AlphaZero(
-    hardware,
-    device='cpu',
-    backend=AlphaZero.Backend.Cpp,
-  )
+  azero = AlphaZero.load("trained/da", device="cpu")
+  # azero = AlphaZero(
+  #   hardware,
+  #   device='cpu',
+  #   backend=AlphaZero.Backend.Cpp,
+  # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
     target_tree_size=64,
@@ -186,7 +186,7 @@ def test_alphazero():
 
   if test_run:
     cfg = TSConfig(
-      target_tree_size=2048,
+      target_tree_size=512,
       noise=0.70,
       dirichlet_alpha=1.0,
       discount_factor=0.0,
@@ -198,7 +198,7 @@ def test_alphazero():
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, _, er = azero.optimize(circuit, cfg, verbose=True)
+      allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=True)
     swaps = swaps_from_alloc(allocs, n_cores)
     n_swaps = count_swaps(swaps)
     check_sanity_swap(allocs, swaps)
@@ -217,7 +217,7 @@ def test_alphazero():
     print("[*] Optimization in series")
     with Timer.get('t'):
       for i, circuit in enumerate(circuits):
-        allocs, cost, _, _ = azero.optimize(circuit, cfg, verbose=False)
+        allocs, cost, _, _ = azero.optimize(circuit, cfg, hardware=hardware, verbose=False)
         check_sanity(allocs, circuit, hardware)
         print(f"[{i+1}/{n_circuits}] c={cost}/{circuit.n_gates_norm} ({cost/circuit.n_gates_norm:.3f})")
     print(f"Final t={Timer.get('t').time:.2f}s")
@@ -226,7 +226,7 @@ def test_alphazero():
     torch.manual_seed(42)
     print("\n[*] Optimization in parallel")
     with Timer.get('t'):
-      results = azero.optimize_mult(circuits, cfg)
+      results = azero.optimize_mult(circuits, cfg, hardware=hardware)
     for i, res in enumerate(results):
       allocs, cost, _, _ = res
       check_sanity(allocs, circuits[i], hardware)

@@ -35,18 +35,16 @@ class DirectAllocator:
     circ_sampler: CircuitSampler
     lr: float
     invalid_move_penalty: float
-    hardware_sampler: Optional[HardwareSampler] = None
+    hardware_sampler: HardwareSampler
     print_grad_each: Optional[int] = None
     detailed_grad: bool = False
 
 
   def __init__(
     self,
-    default_hardware: Hardware,
     device: str = "cpu",
     model_cfg: ModelConfigs = ModelConfigs()
   ):
-    self.default_hw = default_hardware
     self.model_cfg = model_cfg
     self.pred_model = PredictionModel(layers=model_cfg.layers)
     self.pred_model.to(device)
@@ -59,8 +57,6 @@ class DirectAllocator:
 
   def save(self, path: str, overwrite: bool = False):
     params = dict(
-      core_caps=self.default_hw.core_capacities.tolist(),
-      core_conns=self.default_hw.core_connectivity.tolist(),
       layers=self.model_cfg.layers,
     )
     if os.path.isdir(path):
@@ -88,9 +84,8 @@ class DirectAllocator:
       raise Exception(f"Provided load directory does not exist: {path}")
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
-    hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
     model_cfg = ModelConfigs(layers=params['layers'])
-    loaded = DirectAllocator(default_hardware=hardware, device=device, model_cfg=model_cfg)
+    loaded = DirectAllocator(device=device, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
       torch.load(
         os.path.join(path, "pred_mod.pt"),
@@ -186,11 +181,9 @@ class DirectAllocator:
   def optimize(
     self,
     circuit: Circuit,
-    hardware: Optional[Hardware] = None,
+    hardware: Hardware,
     cfg: DAConfig = DAConfig(),
   ) -> Tuple[torch.Tensor, float]:
-    if hardware is None:
-      hardware = self.default_hw
     if circuit.n_qubits != hardware.n_qubits:
       raise Exception((
         f"Number of physical qubits does not match number of qubits in the "
@@ -214,6 +207,7 @@ class DirectAllocator:
   def train(
     self,
     train_cfg: TrainConfig,
+    validation_hardware: Optional[Hardware]
   ) -> dict[str, list]:
     self.iter_timer = Timer.get("_train_iter_timer")
     self.iter_timer.reset()
@@ -226,7 +220,6 @@ class DirectAllocator:
       greedy=False,
     )
     self.pgrad_counter = 1
-    hardware = self.default_hw
 
     data_log = dict(
       loss = [],
@@ -240,9 +233,8 @@ class DirectAllocator:
 
     try:
       for iter in range(train_cfg.train_iters):
-        if train_cfg.hardware_sampler is not None:
-          hardware = train_cfg.hardware_sampler.sample()
-          print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
+        hardware = train_cfg.hardware_sampler.sample()
+        print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
         train_cfg.circ_sampler.num_lq = hardware.n_qubits
         self.iter_timer.start()
         frac_valid_moves, cost_loss, vm_loss = self._train_batch(
@@ -252,6 +244,10 @@ class DirectAllocator:
           train_cfg=train_cfg,
           hardware=hardware,
         )
+
+        if validation_hardware is not None:
+          hardware = validation_hardware
+          train_cfg.circ_sampler.num_lq = hardware.n_qubits
 
         print(f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Running validation...", end='')
         with torch.no_grad():

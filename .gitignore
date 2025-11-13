@@ -9,3 +9,5 @@ trained/**
 misc
 **/build/**
 allocation.svg
+docs/qalloczero/results.txt
+docs/russo impl/results.csv

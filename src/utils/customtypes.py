@@ -5,9 +5,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from qiskit.circuit import QuantumCircuit
 
-from input import IGraph
-
-
 GateType: TypeAlias = Tuple[int,int]
 CircSliceType: TypeAlias = Tuple[GateType, ...]
 
@@ -20,9 +17,10 @@ class Circuit:
 
 
   @staticmethod
-  def from_qasm(qasm_file: str) -> Circuit:
+  def from_qasm(qasm_file: str, n_qubits: Optional[int] = None) -> Circuit:
     circuit = QuantumCircuit.from_qasm_file(qasm_file)
-    igraph = IGraph(qc=circuit)
+    if n_qubits is None:
+      n_qubits = circuit.num_qubits
     gates = []
     for ins in circuit:
       qubits = tuple(circuit.find_bit(q)[0] for q in ins.qubits)
@@ -30,7 +28,7 @@ class Circuit:
         gates.append(qubits)
       elif len(qubits) > 2 and ins.name != 'barrier':
         raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
-    return Circuit.from_gate_list(gates, circuit.num_qubits)
+    return Circuit.from_gate_list(gates, n_qubits)
 
 
   @staticmethod

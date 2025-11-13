@@ -35,20 +35,18 @@ class AlphaZero:
     circ_sampler: CircuitSampler
     lr: float
     ts_cfg: TSConfig
+    hardware_sampler: HardwareSampler
     minimum_noise: float = 0.2
-    hardware_sampler: Optional[HardwareSampler] = None
     print_grad_each: Optional[int] = None
     detailed_grad: bool = False
 
 
   def __init__(
     self,
-    default_hardware: Hardware,
     device: str = "cpu",
     backend: Backend = Backend.Cpp,
     model_cfg: ModelConfigs = ModelConfigs()
   ):
-    self.default_hw = default_hardware
     self.device = device
     self.model_cfg = model_cfg
     self.backend = backend.value(
@@ -61,8 +59,6 @@ class AlphaZero:
 
   def save(self, path: str, overwrite: bool = False):
     params = dict(
-      core_caps=self.default_hw.core_capacities.tolist(),
-      core_conns=self.default_hw.core_connectivity.tolist(),
       backend=self.backend.__class__.__name__,
       layers=self.model_cfg.layers,
     )
@@ -94,10 +90,9 @@ class AlphaZero:
     # Add backend so that it is possible to load non AlphaZero saved models
     if 'backend' not in params.keys():
       params["backend"] = 'TSCppEngine'
-    hardware = Hardware(torch.tensor(params["core_caps"]), torch.tensor(params["core_conns"]))
     model_cfg = ModelConfigs(layers=params['layers'])
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
-    loaded = AlphaZero(default_hardware=hardware, device=device, backend=backend, model_cfg=model_cfg)
+    loaded = AlphaZero(device=device, backend=backend, model_cfg=model_cfg)
     loaded.pred_model.load_state_dict(
       torch.load(
         os.path.join(path, "pred_mod.pt"),
@@ -113,12 +108,9 @@ class AlphaZero:
     self,
     circuit: Circuit,
     ts_cfg: TSConfig,
-    hardware: Optional[Hardware] = None,
+    hardware: Hardware,
     verbose: bool = False,
   ) -> Tuple[torch.Tensor, float, int, float]:
-    if hardware is None:
-      hardware = self.default_hw
-
     if circuit.n_qubits != hardware.n_qubits:
       raise Exception((
         f"Number of physical qubits does not match number of qubits in the "
@@ -142,11 +134,8 @@ class AlphaZero:
       self,
       circuits: List[Circuit],
       ts_cfg: TSConfig,
-      hardware: Optional[Hardware] = None,
+      hardware: Hardware,
   ) -> List[Tuple[torch.Tensor, float, int, float]]:
-    if hardware is None:
-      hardware = self.default_hw
-
     def work(azero, **kwargs):
       allocations, exp_nodes, expl_ratio, _ = azero.backend.optimize(**kwargs)
       cost = sol_cost(allocations, hardware.core_connectivity)
@@ -176,12 +165,9 @@ class AlphaZero:
   def _optimize_mult_train(
     self,
     circuits: List[Circuit],
-    hardware: Optional[Hardware],
+    hardware: Hardware,
     ts_cfg,
   ) -> List[Tuple[float, float, TSTrainData]]:
-    if hardware is None:
-      hardware = self.default_hw
-
     def work(azero, **kwargs):
       allocations, exp_nodes, expl_ratio, tdata = azero.backend.optimize(**kwargs)
       norm_cost = sol_cost(allocations, hardware.core_connectivity)/kwargs['alloc_steps'][0][3]
@@ -224,8 +210,6 @@ class AlphaZero:
       self.pred_model.parameters(), lr=train_cfg.lr
     )
     self.pgrad_counter = 1
-    hardware = self.default_hw
-
     data_log = dict(
       loss = [],
       noise = [],
@@ -235,9 +219,8 @@ class AlphaZero:
 
     try:
       for iter in range(train_cfg.train_iters):
-        if train_cfg.hardware_sampler is not None:
-          hardware = train_cfg.hardware_sampler.sample()
-          print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
+        hardware = train_cfg.hardware_sampler.sample()
+        print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
         train_cfg.circ_sampler.num_lq = hardware.n_qubits
         self.iter_timer.start()
         print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")

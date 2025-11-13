@@ -18,19 +18,18 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    da_trained = DirectAllocator.load("trained/azero", device="cuda"),
-    azero_trained =    AlphaZero.load("trained/azero", device="cpu"),
+    da_trained = DirectAllocator.load("trained/da_v3", device="cuda"),
+    azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )
   cfg = TSConfig(
     target_tree_size=512,
     noise=0.10,
-    dirichlet_alpha=0.0,
+    dirichlet_alpha=0.25,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.2,
-    ucb_c2=500,
+    ucb_c1=0.275,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuits = [sampler.sample() for _ in range(n_circuits)]

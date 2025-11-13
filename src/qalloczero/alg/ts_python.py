@@ -78,7 +78,8 @@ class TSPythonEngine(TSEngine):
       qubit1 = self.alloc_steps[self.root.allocation_step][2].item()
 
       if verbose:
-        print(f"\033[2K\r - Optimization step {step+1}/{self.n_steps}")
+        print((f"\033[2K\r - Optimization step {step+1}/{self.n_steps} "
+               f"({int(100*(step+1)/self.n_steps)}%)"), end="")
 
       if ret_train_data:
         self._store_train_data(tdata, step, slice_idx, qubit0, qubit1)

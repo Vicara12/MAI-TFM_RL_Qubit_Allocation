@@ -146,8 +146,11 @@ auto TreeSearch::optimize(
     int qubit0 = ctx.alloc_steps_[ctx.root_->alloc_step][1].item<int>();
     int qubit1 = ctx.alloc_steps_[ctx.root_->alloc_step][2].item<int>();
 
-    if (verbose)
-      std::cout << "\033[2K\r - Optimization step " << (step+1) << "/" << ctx.n_steps_ << std::endl;
+    if (verbose) {
+      std::cout << "\033[2K\r - Optimization step " << (step+1) << "/" << ctx.n_steps_
+                << " (" << int(100*(step + 1) / ctx.n_steps_) << "%)";
+      std::cout.flush();
+    }
 
     if (ret_train_data)
       store_train_data(ctx, *tdata, step, slice_idx, qubit0, qubit1);
@@ -164,6 +167,8 @@ auto TreeSearch::optimize(
       tdata->value[step][0] = action_cost;
     }
   }
+  if (verbose)
+    std::cout << std::endl;
 
   if (ret_train_data) {
     // Compute total remaining cost for each step and normalize
