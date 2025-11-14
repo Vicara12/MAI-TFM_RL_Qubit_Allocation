@@ -43,7 +43,7 @@ class PredictionModel(torch.nn.Module):
       layers: List[int],
   ):
     super().__init__()
-    layers = [7] + layers
+    layers = [8] + layers
     self.ff_key = EmbedModel(layers)
     self.ff_query = EmbedModel(layers)
     self.output_logits_ = False
@@ -122,6 +122,24 @@ class PredictionModel(torch.nn.Module):
     return swap_cost
 
 
+  def _get_core_attraction(
+    self,
+    C: int,
+    circuit_embs: torch.Tensor,
+    prev_core: torch.Tensor,
+  ):
+    # Expand prev_core for comparison: (B, 1, Q)
+    # Compare against all possible core indices (C,):
+    core_ids = torch.arange(C, device=prev_core.device).view(1, C, 1)  # [1,C,1]
+    prev_core_expanded = prev_core.unsqueeze(1)                        # [B,1,Q]
+    # Create mask: True where prev_core[b, q'] == c
+    mask = (prev_core_expanded == core_ids)                            # [B,C,Q]
+    # Use mask to sum over qb dimension, expand circuit_embs for broadcasting: (B, 1, Q, Q)
+    weighted = circuit_embs.unsqueeze(1) * mask.unsqueeze(-2)          # [B,C,Q,Q]
+    affinities = weighted.sum(dim=-1)                                  # [B, C, Q]
+    return affinities
+
+
   def _format_circuit_emb(
     self,
     circuit_emb: torch.Tensor,
@@ -156,6 +174,7 @@ class PredictionModel(torch.nn.Module):
     core_caps = self._get_core_caps(core_capacities, Q, device)
     core_cost = self._get_core_cost(
       qubits, prev_core_allocs, core_capacities, core_connectivity, Q, C)
+    core_attraction = self._get_core_attraction(C, circuit_emb, prev_core_allocs)
     ce_q0, ce_q1 = self._format_circuit_emb(circuit_emb, qubits, C)
     return torch.cat([
       qubit_matrix.unsqueeze(-1),
@@ -163,9 +182,10 @@ class PredictionModel(torch.nn.Module):
       curr_core.unsqueeze(-1),
       core_caps.unsqueeze(-1),
       core_cost.unsqueeze(-1),
+      core_attraction.unsqueeze(-1),
       ce_q0.unsqueeze(-1),
       ce_q1.unsqueeze(-1),
-    ], dim=-1) # [B,C,Q,7]
+    ], dim=-1) # [B,C,Q,8]
 
 
   def _extract_qubit_inputs(self, idx: torch.Tensor, inputs: torch.Tensor, C: int) -> torch.Tensor:
@@ -173,30 +193,30 @@ class PredictionModel(torch.nn.Module):
     # it takes to do this
     input_size = inputs.shape[-1]
     ix_per_core = idx.unsqueeze(-1).expand(-1,C)
-    idx_expanded = ix_per_core.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, input_size) # [B, C, 1, 7]
-    result = torch.gather(inputs, dim=2, index=idx_expanded.type(torch.long))  # [B, C, 1, 7]
-    return result.squeeze(2)  # [B, C, 7]
+    idx_expanded = ix_per_core.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, input_size) # [B, C, 1, 8]
+    result = torch.gather(inputs, dim=2, index=idx_expanded.type(torch.long))  # [B, C, 1, 8]
+    return result.squeeze(2)  # [B, C, 8]
 
 
   def _get_embeddings(self, inputs, qubits) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     (B,C,Q,_) = inputs.shape
 
     key_embs = self.ff_key(
-      inputs.reshape(-1,7) # [B*C*Q,7]
+      inputs.reshape(-1,8) # [B*C*Q,8]
     ).reshape(B,C,Q,-1) # [B,C,Q,H]
 
-    q0_inputs = self._extract_qubit_inputs(qubits[:,0], inputs, C) # [B,C,7]
+    q0_inputs = self._extract_qubit_inputs(qubits[:,0], inputs, C) # [B,C,8]
     q0_embs = self.ff_query(
-      q0_inputs.reshape(-1,7) # [B*C,7]
+      q0_inputs.reshape(-1,8) # [B*C,8]
     ).reshape(B,C,-1) # [B,C,H]
 
     double_q = (qubits[:,1] != -1)
     b = double_q.sum()
     q1_embs = torch.zeros_like(q0_embs)
     if b != 0:
-      q1_inputs = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,7]
+      q1_inputs = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,8]
       q1_embs[double_q] = self.ff_key(
-        q1_inputs.reshape(-1,7) # [b*C,7]
+        q1_inputs.reshape(-1,8) # [b*C,8]
       ).reshape(b,C,-1) # [b,C,H]
 
     return key_embs, q0_embs, q1_embs
@@ -210,7 +230,7 @@ class PredictionModel(torch.nn.Module):
     (B,C,Q,H) = key_embs.shape
     projs_q0 = torch.bmm(key_embs.reshape(B*C,Q,H), q0_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
     projs_q1 = torch.bmm(key_embs.reshape(B*C,Q,H), q1_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
-    return (projs_q0, projs_q1) / torch.sqrt(torch.tensor(H))
+    return (projs_q0 + projs_q1) / torch.sqrt(torch.tensor(H))
 
 
   def forward(

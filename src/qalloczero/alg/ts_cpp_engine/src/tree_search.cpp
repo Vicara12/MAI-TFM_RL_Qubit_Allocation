@@ -242,6 +242,9 @@ auto TreeSearch::initialize_search(
 
 
 auto TreeSearch::iterate(OptCtx &ctx) const -> std::tuple<int, float, at::Tensor, int> {
+
+  std::cout << std::endl << "[*] Allocation step: " << ctx.root_->alloc_step << std::endl;
+
   int num_sims = ctx.cfg_.target_tree_size - ctx.root_->visit_count;
   for (int i = 0; i < num_sims; i++) {
     // Node and action that lead to that node pairs
@@ -249,6 +252,8 @@ auto TreeSearch::iterate(OptCtx &ctx) const -> std::tuple<int, float, at::Tensor
     search_path.push_back({ctx.root_, -1});
     int action = -1;
     auto node = ctx.root_;
+
+    std::cout << "-------------" << std::endl;
 
     while (node->expanded() and not node->terminal) {
       std::tie(node, action) = this->select_child(ctx, node);
@@ -272,28 +277,39 @@ auto TreeSearch::select_action(
   std::shared_ptr<const Node> node,
   float temp
 ) const -> std::tuple<int, at::Tensor> {
-    torch::Tensor visit_counts = torch::zeros_like(*node->core_caps);
-    if (node->expanded()) {
-      for (const auto& [action, v] : *(node->children)) {
-        auto child_node = std::get<0>(v);
-        visit_counts[action] = static_cast<float>(child_node->visit_count);
-      }
+  torch::Tensor visit_counts = torch::zeros_like(*node->core_caps);
+  if (node->expanded()) {
+    for (const auto& [action, v] : *(node->children)) {
+      auto child_node = std::get<0>(v);
+      visit_counts[action] = static_cast<float>(child_node->visit_count);
     }
+  }
 
-    float total_visits = visit_counts.sum().item<float>();
-    if (total_visits > 0.0f) {
-        visit_counts = visit_counts / total_visits;
-    }
+  float total_visits = visit_counts.sum().item<float>();
+  if (total_visits > 0.0f) {
+      visit_counts = visit_counts / total_visits;
+  }
 
-    int action = 0;
-    if (temp == 0.0f) {
-        action = visit_counts.argmax().item<int>();
-    } else {
-        torch::Tensor probs = torch::softmax(visit_counts / temp, /*dim=*/-1);
-        action = torch::multinomial(probs, /*num_samples=*/1).item<int>();
-    }
+  int action = 0;
+  if (temp == 0.0f) {
+      action = visit_counts.argmax().item<int>();
+  } else {
+      torch::Tensor probs = torch::softmax(visit_counts / temp, /*dim=*/-1);
+      action = torch::multinomial(probs, /*num_samples=*/1).item<int>();
+  }
 
-    return {action, visit_counts};
+  std::cout << " => Root's policy:";
+  for (int p = 0; p < node->policy->size(0); p++)
+    std::cout << " " << (*node->policy)[p].item<float>();
+  std::cout << std::endl;
+
+  std::cout << " => Selecting action " << action << " visit counts (";
+  for (int i = 0; i < node->core_caps->size(0); i++)
+    std::cout << visit_counts[i].item<float>() << " ";
+  std::cout << ")" << std::endl;
+  std::cout << " => Expected allocation cost: " << node->value() << std::endl;
+
+  return {action, visit_counts};
 }
 
 
@@ -489,6 +505,7 @@ auto TreeSearch::ucb(
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
   float ucb = prob_a * std::sqrt(vc) / (1 + vc_act);
+std::cout << " (" << q_v - ctx.cfg_.ucb_c1 * ucb << " || " << q_v << "|" << ctx.cfg_.ucb_c1 * ucb << "=" << ctx.cfg_.ucb_c1 << "*" << ucb << ")";
   return q_v - ctx.cfg_.ucb_c1 * ucb;
 }
 
@@ -500,6 +517,8 @@ auto TreeSearch::select_child(
   double min_ucb = std::numeric_limits<double>::infinity();
   int best_action = -1;
 
+  std::cout << " - UCB for " << current_node->alloc_step << ":";
+
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(ctx, current_node, action);
     assert(not std::isnan(ucb_value));
@@ -509,6 +528,7 @@ auto TreeSearch::select_child(
       best_action = action;
     }
   }
+  std::cout << " best=" << best_action << std::endl;
   assert(best_action != -1);
   return {current_node->get_child(best_action), best_action};
 }

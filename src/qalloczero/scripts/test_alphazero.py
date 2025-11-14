@@ -1,6 +1,6 @@
 import torch
 from utils.timer import Timer
-from utils.customtypes import Hardware
+from utils.customtypes import Hardware, Circuit
 from utils.plotter import drawQubitAllocation
 from utils.allocutils import sol_cost, check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
 from utils.other_utils import save_train_data
@@ -19,10 +19,7 @@ def testing_pred_model():
     [1,0],
   ], dtype=torch.float)
   pred_model = PredictionModel(
-    # n_qubits=4,
-    # n_cores=2,
-    # number_emb_size=4,
-    # n_heads=4,
+    layers=[8,16,32]
   )
   pred_model.eval()
   qubits = torch.tensor([
@@ -49,41 +46,40 @@ def testing_pred_model():
   slice_adj_mat = torch.tensor([
     [[0,1,0,0],
      [1,0,0,0],
-     [0,0,1,0],
-     [0,0,0,1]],
+     [0,0,0,0],
+     [0,0,0,0]],
     [[0,0,0,1],
-     [0,1,0,0],
-     [0,0,1,0],
+     [0,0,0,0],
+     [0,0,0,0],
      [1,0,0,0]],
     [[0,1,0,0],
      [1,0,0,0],
      [0,0,0,1],
      [0,0,1,0]],
   ])
-  circ_enc = None # CircuitEncoder(n_qubits=4, n_heads=0, n_layers=0)
-  circuit_emb = circ_enc(slice_adj_mat.unsqueeze(0))[0]
+  slice_gates = (((0,1),),((0,3),),((0,1),(2,3)))
+  circ = Circuit(slice_gates=slice_gates, n_qubits=4)
+  circuit_emb = circ.embedding
   
-  probs_batched, vals_batched = pred_model(
+  probs_batched, vals_batched, _ = pred_model(
     qubits=qubits,
     prev_core_allocs=prev_core_allocs,
     current_core_allocs=current_core_allocs,
     core_capacities=core_capacities,
     core_connectivity=core_connectivity,
     circuit_emb=circuit_emb,
-    slice_adj_mat=slice_adj_mat,
   )
 
   probs_single = []
   vals_single = []
   for i in range(len(slice_adj_mat)):
-    p,v = pred_model(
+    p,v,l = pred_model(
       qubits=qubits[i].unsqueeze(0),
       prev_core_allocs=prev_core_allocs[i].unsqueeze(0),
       current_core_allocs=current_core_allocs[i].unsqueeze(0),
       core_capacities=core_capacities[i].unsqueeze(0),
       core_connectivity=core_connectivity,
       circuit_emb=circuit_emb[i].unsqueeze(0),
-      slice_adj_mat=slice_adj_mat[i].unsqueeze(0),
     )
     probs_single.append(p)
     vals_single.append(v)
@@ -92,6 +88,7 @@ def testing_pred_model():
 
   print(torch.equal(probs_batched, probs_single))
   print(torch.equal(vals_batched, vals_single))
+  pass
 
 
 def test_cpp_engine():
@@ -148,6 +145,8 @@ def test_cpp_engine():
 
 
 def test_alphazero():
+  testing_pred_model()
+  return
   test_run = True
   test_train = False
 
@@ -161,18 +160,17 @@ def test_alphazero():
 
   torch.manual_seed(42)
   n_qubits = 16
-  n_slices = 32
+  n_slices = 8
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
-  azero = AlphaZero.load("trained/da", device="cpu")
-  # azero = AlphaZero(
-  #   hardware,
-  #   device='cpu',
-  #   backend=AlphaZero.Backend.Cpp,
-  # )
+  # azero = AlphaZero.load("trained/da", device="cpu")
+  azero = AlphaZero(
+    device='cpu',
+    backend=AlphaZero.Backend.Cpp,
+  )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
     target_tree_size=64,
@@ -187,18 +185,18 @@ def test_alphazero():
   if test_run:
     cfg = TSConfig(
       target_tree_size=512,
-      noise=0.70,
+      noise=0.0,
       dirichlet_alpha=1.0,
       discount_factor=0.0,
       action_sel_temp=0,
-      ucb_c1=0.05,
+      ucb_c1=0.15,
       ucb_c2=500,
     )
     # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=True)
+      allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=False)
     swaps = swaps_from_alloc(allocs, n_cores)
     n_swaps = count_swaps(swaps)
     check_sanity_swap(allocs, swaps)
@@ -245,7 +243,6 @@ def test_alphazero():
     )
     # azero = AlphaZero.load("trained/azero_finetune", device="cpu")
     azero = AlphaZero(
-      hardware,
       device='cpu',
       backend=AlphaZero.Backend.Cpp,
     )

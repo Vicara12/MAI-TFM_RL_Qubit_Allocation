@@ -11,11 +11,11 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 
 
 def test_direct_alloc():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -31,7 +31,6 @@ def test_direct_alloc():
   hardware_sampler = HardwareSampler(max_nqubits=40, range_ncores=[2,8])
   # allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
   # allocator = DirectAllocator(
-  #   hardware,
   #   device='cuda',
   # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
