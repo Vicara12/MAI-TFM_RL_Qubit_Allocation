@@ -114,7 +114,12 @@ class DirectAllocator:
       noise[~valid_cores] = 0
       pol = (1 - cfg.noise)*pol + cfg.noise*noise
     sum_pol = pol.sum()
-    pol /= sum_pol
+    if cfg.mask_invalid and sum_pol < 1e-5:
+      pol = torch.zeros_like(pol)
+      pol[valid_cores] = 1/sum(valid_cores)
+      pass
+    else:
+      pol /= sum_pol
     core = pol.argmax().item() if cfg.greedy else torch.distributions.Categorical(pol).sample()
     return core, pol, valid_cores
 
@@ -172,7 +177,11 @@ class DirectAllocator:
         all_actions.append(action)
         all_probs.append(log_pol)
         all_valid_cores.append(valid_cores)
-      core_caps[action] = max(0, core_caps[action] - n_qubits)
+      if cfg.mask_invalid:
+        core_caps[action] = core_caps[action] - n_qubits
+        assert core_caps[action] >= 0, f"Illegal core caps: {core_caps}"
+      else:
+        core_caps[action] = max(0, core_caps[action] - n_qubits)
       prev_slice = slice_idx
     if ret_train_data:
       return torch.tensor(all_actions), torch.stack(all_probs), torch.stack(all_valid_cores)

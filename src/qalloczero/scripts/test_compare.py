@@ -20,7 +20,7 @@ def validate():
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     hqa = HQA(lookahead=True, verbose=False),
-    da_trained = DirectAllocator.load("trained/da_v5", device="cuda"),
+    da_trained = DirectAllocator.load("trained/da", device="cpu"),
     # azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
@@ -48,8 +48,7 @@ def validate():
       else:
         raise Exception("Unrecognized algorithm type")
     norm_res = [res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)]
-    # norm_swaps = [
-    #   count_swaps(swaps_from_alloc(res[0], n_cores))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
-    # ]
-    norm_swaps = [1,1]
+    norm_swaps = [
+      count_swaps(swaps_from_alloc(res[0], n_cores))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
+    ]
     print(f" + t={Timer.get('t').time:.2f}s avg_cost={sum(norm_res)/len(norm_res):.4f} avg_swaps={sum(norm_swaps)/len(norm_swaps):.4f}")

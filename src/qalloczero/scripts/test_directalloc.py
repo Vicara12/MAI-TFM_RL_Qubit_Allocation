@@ -22,9 +22,9 @@ def test_direct_alloc():
   print("[*] TESTING DIRECT ALLOCATION")
 
   torch.manual_seed(42)
-  n_qubits = 50
-  n_slices = 12
-  core_caps = torch.tensor([10,10,10,10,10], dtype=torch.int)
+  n_qubits = 16
+  n_slices = 4
+  core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
@@ -41,7 +41,7 @@ def test_direct_alloc():
   )
 
   if test_run:
-    allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
+    allocator = DirectAllocator.load("trained/da", device="cpu")
     circuit = sampler.sample()
     torch.manual_seed(42)
     with Timer.get('t'):
