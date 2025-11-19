@@ -137,6 +137,10 @@ class PredictionModel(torch.nn.Module):
     # Use mask to sum over qb dimension, expand circuit_embs for broadcasting: (B, 1, Q, Q)
     weighted = circuit_embs.unsqueeze(1) * mask.unsqueeze(-2)          # [B,C,Q,Q]
     affinities = weighted.sum(dim=-1)                                  # [B, C, Q]
+    # Normalize
+    maximums = torch.max(affinities.reshape(prev_core.shape[0], -1),dim=-1).values
+    if (maximums != 0).any():
+      return affinities/maximums
     return affinities
 
 
