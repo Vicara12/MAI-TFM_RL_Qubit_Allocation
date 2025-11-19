@@ -150,7 +150,8 @@ class PredictionModel(torch.nn.Module):
     ce_q0 = circuit_emb[torch.arange(B), qubits[:,0]] # [B,C,Q]
     ce_q1 = torch.zeros_like(ce_q0)                   # [B,C,Q]
     double_qubits = (qubits[:,1] != -1)
-    ce_q1[double_qubits] = circuit_emb[double_qubits, qubits[double_qubits,1]]
+    if double_qubits.any():
+      ce_q1[double_qubits] = circuit_emb[double_qubits, qubits[double_qubits,1]]
     ce_q0 = ce_q0.unsqueeze(1).expand(-1,C,-1)
     ce_q1 = ce_q1.unsqueeze(1).expand(-1,C,-1)
     return ce_q0, ce_q1

@@ -43,6 +43,7 @@ def test_direct_alloc():
   if test_run:
     allocator = DirectAllocator.load("trained/da", device="cpu")
     circuit = sampler.sample()
+    circuit.alloc_slices
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, = allocator.optimize(circuit, hardware=hardware, cfg=cfg)

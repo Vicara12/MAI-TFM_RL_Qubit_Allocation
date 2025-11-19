@@ -3,6 +3,7 @@ import json
 import torch
 import warnings
 from time import time
+from copy import copy
 from typing import Self, Tuple, Optional
 from dataclasses import dataclass
 from utils.customtypes import Circuit, Hardware
@@ -98,13 +99,14 @@ class DirectAllocator:
 
   def _sample_action(
     self,
-    pol: torch.Tensor,
+    logits: torch.Tensor,
     core_caps: torch.Tensor,
     n_qubits: int,
     cfg: DAConfig,
-  ) -> Tuple[int, torch.Tensor, torch.Tensor]:
+  ) -> Tuple[int, int, torch.Tensor, torch.Tensor]:
     # Set prior of cores that do not have space for this alloc to zero
-    valid_cores = (core_caps >= n_qubits)
+    valid_cores = (core_caps >= n_qubits).expand(logits.shape).reshape((-1,))
+    pol = torch.softmax(logits.reshape((-1,)), dim=-1)
     assert valid_cores.any().item(), "No valid allocation possible"
     if cfg.mask_invalid:
       pol[~valid_cores] = 0
@@ -117,18 +119,18 @@ class DirectAllocator:
     if cfg.mask_invalid and sum_pol < 1e-5:
       pol = torch.zeros_like(pol)
       pol[valid_cores] = 1/sum(valid_cores)
-      pass
     else:
       pol /= sum_pol
-    core = pol.argmax().item() if cfg.greedy else torch.distributions.Categorical(pol).sample()
-    return core, pol, valid_cores
+    action = pol.argmax().item() if cfg.greedy else torch.distributions.Categorical(pol).sample()
+    (qubit_set, core) = torch.unravel_index(torch.tensor(action), logits.shape)
+    return qubit_set.item(), core.item(), pol, valid_cores.reshape(logits.shape)
 
 
   def _allocate(
     self,
     allocations: torch.Tensor,
     circ_embs: torch.Tensor,
-    alloc_steps: torch.Tensor,
+    alloc_slices: list[tuple[int, list[int], list[tuple[int,int]]]],
     cfg: DAConfig,
     hardware: Hardware,
     ret_train_data: bool,
@@ -145,44 +147,74 @@ class DirectAllocator:
       all_actions = []
       all_probs = []
       all_valid_cores = []
-    prev_slice = -1
-    for (slice_idx, qubit0, qubit1, _) in alloc_steps:
-      if prev_slice != slice_idx:
-        prev_core_allocs = core_allocs
-        core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
-        core_caps = core_caps_orig.clone()
-      pol, _, log_pol = self.pred_model(
-        qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
-        prev_core_allocs=prev_core_allocs.unsqueeze(0),
-        current_core_allocs=core_allocs.unsqueeze(0),
-        core_capacities=core_caps.unsqueeze(0),
-        core_connectivity=hardware.core_connectivity.to(self.device),
-        circuit_emb=circ_embs[:,slice_idx],
-      )
-      pol = pol.squeeze(0)
-      log_pol = log_pol.squeeze(0)
-      n_qubits = (1 if qubit1 == -1 else 2)
-      action, pol, valid_cores = self._sample_action(
-        pol=pol,
-        core_caps=core_caps,
-        n_qubits=n_qubits,
-        cfg=cfg
-      )
-      allocations[slice_idx,qubit0] = action
-      core_allocs[qubit0] = action
-      if qubit1 != -1:
-        allocations[slice_idx,qubit1] = action
-        core_allocs[qubit1] = action
-      if ret_train_data:
-        all_actions.append(action)
-        all_probs.append(log_pol)
-        all_valid_cores.append(valid_cores)
-      if cfg.mask_invalid:
-        core_caps[action] = core_caps[action] - n_qubits
-        assert core_caps[action] >= 0, f"Illegal core caps: {core_caps}"
-      else:
-        core_caps[action] = max(0, core_caps[action] - n_qubits)
-      prev_slice = slice_idx
+    dev_core_con = hardware.core_connectivity.to(self.device)
+    for slice_idx, (_, free_qubits, paired_qubits) in enumerate(alloc_slices):
+      prev_core_allocs = core_allocs
+      core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
+      core_caps = core_caps_orig.clone()
+      paired_qubits = list(paired_qubits)
+      free_qubits = list(free_qubits)
+      
+      while paired_qubits:
+        _, _, log_pol = self.pred_model(
+          qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
+          prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
+          current_core_allocs=core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
+          core_capacities=core_caps.expand((len(paired_qubits), hardware.n_cores)),
+          core_connectivity=dev_core_con,
+          circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
+        )
+        qubit_set, core, pol, valid_cores = self._sample_action(
+          logits=log_pol,
+          core_caps=core_caps,
+          n_qubits=2,
+          cfg=cfg
+        )
+        allocations[slice_idx,paired_qubits[qubit_set][0]] = core
+        core_allocs[paired_qubits[qubit_set][0]] = core
+        allocations[slice_idx,paired_qubits[qubit_set][1]] = core
+        core_allocs[paired_qubits[qubit_set][1]] = core
+        if ret_train_data:
+          all_actions.append((paired_qubits[qubit_set], core))
+          all_probs.append(pol)
+          all_valid_cores.append(valid_cores)
+        core_caps[core] -= 2
+        if cfg.mask_invalid:
+          assert core_caps[core] >= 0, f"Illegal core caps: {core_caps}"
+        else:
+          core_caps[core] = max(0, core_caps[core])
+        del paired_qubits[qubit_set]
+      
+      while free_qubits:
+        qubits = torch.tensor(free_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
+        qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
+        _, _, log_pol = self.pred_model(
+          qubits=qubits,
+          prev_core_allocs=prev_core_allocs.expand((len(free_qubits), len(prev_core_allocs))),
+          current_core_allocs=core_allocs.expand((len(free_qubits), len(prev_core_allocs))),
+          core_capacities=core_caps.expand((len(free_qubits), hardware.n_cores)),
+          core_connectivity=dev_core_con,
+          circuit_emb=circ_embs[:,slice_idx,:,:],
+        )
+        qubit_set, core, pol, valid_cores = self._sample_action(
+          logits=log_pol,
+          core_caps=core_caps,
+          n_qubits=1,
+          cfg=cfg
+        )
+        allocations[slice_idx,free_qubits[qubit_set]] = core
+        core_allocs[free_qubits[qubit_set]] = core
+        if ret_train_data:
+          all_actions.append((free_qubits[qubit_set], core))
+          all_probs.append(pol)
+          all_valid_cores.append(valid_cores)
+        core_caps[core] -= 1
+        if cfg.mask_invalid:
+          assert core_caps[core] >= 0, f"Illegal core caps: {core_caps}"
+        else:
+          core_caps[core] = max(0, core_caps[core])
+        del free_qubits[qubit_set]
+    
     if ret_train_data:
       return torch.tensor(all_actions), torch.stack(all_probs), torch.stack(all_valid_cores)
   
@@ -204,7 +236,7 @@ class DirectAllocator:
     self._allocate(
       allocations=allocations,
       circ_embs=circ_embs,
-      alloc_steps=circuit.alloc_steps,
+      alloc_slices=circuit.alloc_slices,
       cfg=cfg,
       hardware=hardware,
       ret_train_data=False,

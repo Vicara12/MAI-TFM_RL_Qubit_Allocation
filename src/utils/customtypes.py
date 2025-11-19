@@ -78,6 +78,12 @@ class Circuit:
     return self.alloc_steps_
   
   @property
+  def alloc_slices(self) -> list[tuple[int, list[int], list[tuple[int,int]]]]:
+    if not hasattr(self, "alloc_slices_"):
+      self.alloc_slices_ = self._get_alloc_slices()
+    return self.alloc_slices_
+  
+  @property
   def n_steps(self) -> int:
     if not hasattr(self, "n_steps_"):
         self.n_steps_ = self.alloc_steps.shape[0]
@@ -95,6 +101,16 @@ class Circuit:
       self.embedding_ = self._get_embedding()
     return self.embedding_
 
+
+  def _get_alloc_slices(self) -> list[tuple[int, list[int], list[tuple[int,int]]]]:
+    gates_per_slice = [len(s) for s in self.slice_gates]
+    remaining_gates_list = [sum(gates_per_slice[i:]) for i in range(1, self.n_slices+1)]
+    alloc_slices = []
+    for s, rem_gates in zip(self.slice_gates, remaining_gates_list):
+      paired_qubits = set(sum(s, tuple()))
+      free_qubits = tuple(set(range(self.n_qubits)) - paired_qubits)
+      alloc_slices.append((rem_gates, free_qubits, s))
+    return alloc_slices
 
   def _get_adj_matrices(self) -> torch.Tensor:
     matrices = torch.zeros(size=(self.n_slices,self.n_qubits,self.n_qubits))
