@@ -13,14 +13,14 @@ def validate():
   torch.manual_seed(42)
   n_qubits = 16
   n_slices = 32
-  n_circuits = 16
+  n_circuits = 32
   core_caps = torch.tensor([4]*4, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     hqa = HQA(lookahead=True, verbose=False),
-    da_trained = DirectAllocator.load("trained/da", device="cpu"),
+    da_trained = DirectAllocator.load("trained/da_v8", device="cuda"),
     # azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),

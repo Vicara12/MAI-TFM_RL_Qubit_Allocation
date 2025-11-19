@@ -90,7 +90,6 @@ def train_model_da(architecture: list[int], name: str):
     core_capacities=torch.tensor([4]*4),
     core_connectivity=(torch.ones(4,4) - torch.eye(4))
   )
-  hardware_sampler = HardwareSampler(max_nqubits=40, range_ncores=[2,8])
   allocator = DirectAllocator(
     device='cuda',
     model_cfg=ModelConfigs(layers=architecture),
@@ -98,15 +97,15 @@ def train_model_da(architecture: list[int], name: str):
   save_folder = f"trained/{name}"
   try:
     train_cfg = DirectAllocator.TrainConfig(
-      train_iters=1_500,
+      train_iters=2_000,
       batch_size=64,
       validation_size=16,
       initial_noise=0.4,
-      noise_decrease_factor=0.99,
-      circ_sampler=RandomCircuit(num_lq=50, num_slices=8),
-      lr=5e-5,
+      noise_decrease_factor=0.995,
+      circ_sampler=RandomCircuit(num_lq=24, num_slices=4),
+      lr=2.5e-5,
       invalid_move_penalty=0.1,
-      hardware_sampler=hardware_sampler,
+      hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
     )
     train_data = allocator.train(train_cfg, validation_hardware=validation_hardware)
     save_folder = allocator.save(save_folder, overwrite=False)
