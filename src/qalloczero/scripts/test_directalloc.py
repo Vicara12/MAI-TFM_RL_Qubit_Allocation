@@ -11,11 +11,11 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 
 
 def test_direct_alloc():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -23,12 +23,12 @@ def test_direct_alloc():
 
   torch.manual_seed(42)
   n_qubits = 16
-  n_slices = 4
+  n_slices = 16
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
-  hardware_sampler = HardwareSampler(max_nqubits=40, range_ncores=[2,8])
+  hardware_sampler = HardwareSampler(max_nqubits=20, range_ncores=[2,8])
   # allocator = DirectAllocator.load("trained/direct_allocator", device="cuda")
   # allocator = DirectAllocator(
   #   device='cuda',
@@ -80,8 +80,7 @@ def test_direct_alloc():
   
   if test_train:
     allocator = DirectAllocator(
-      hardware,
-      device='cuda',
+      device='cpu',
       model_cfg=ModelConfigs(layers=[8,8,16,16,32,32,64,64,64]),
     )
     save_folder = "trained/direct_allocator"
@@ -90,17 +89,17 @@ def test_direct_alloc():
       train_cfg = DirectAllocator.TrainConfig(
         train_iters=1_000,
         batch_size=8 ,
-        validation_size=20,
+        validation_size=16,
         initial_noise=0.4,
-        noise_decrease_factor=0.95,
-        circ_sampler=RandomCircuit(num_lq=n_qubits, num_slices=16),
+        noise_decrease_factor=0.99,
+        circ_sampler=RandomCircuit(num_lq=n_qubits, num_slices=4),
         lr=5e-5,
         invalid_move_penalty=0.3,
         hardware_sampler=hardware_sampler,
         # print_grad_each=5,
         # detailed_grad=False,
       )
-      train_data = allocator.train(train_cfg)
+      train_data = allocator.train(train_cfg, validation_hardware=hardware)
       save_folder = allocator.save(save_folder, overwrite=False)
       save_train_data(data=train_data, train_folder=save_folder)
     except KeyboardInterrupt:
