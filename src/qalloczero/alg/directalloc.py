@@ -3,7 +3,7 @@ import json
 import torch
 import warnings
 from time import time
-from typing import Self, Tuple, Optional
+from typing import Self, Tuple, Optional, Any
 from dataclasses import dataclass
 from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost
@@ -211,12 +211,13 @@ class DirectAllocator:
     )
     cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
     return allocations, cost
-  
+
 
   def train(
     self,
     train_cfg: TrainConfig,
-    validation_hardware: Optional[Hardware]
+    validation_hardware: Optional[Hardware],
+    teacher_allocator: Optional[Any],
   ) -> dict[str, list]:
     self.iter_timer = Timer.get("_train_iter_timer")
     self.iter_timer.reset()
@@ -246,13 +247,24 @@ class DirectAllocator:
         print(f"Hardware: {hardware.core_capacities.tolist()} nq={hardware.n_qubits} nc={hardware.n_cores}")
         train_cfg.circ_sampler.num_lq = hardware.n_qubits
         self.iter_timer.start()
-        frac_valid_moves, cost_loss, vm_loss = self._train_batch(
-          iter=iter,
-          optimizer=optimizer,
-          opt_cfg=opt_cfg,
-          train_cfg=train_cfg,
-          hardware=hardware,
-        )
+
+        if teacher_allocator is None:
+          frac_valid_moves, cost_loss, vm_loss = self._train_batch_rl(
+            iter=iter,
+            optimizer=optimizer,
+            opt_cfg=opt_cfg,
+            train_cfg=train_cfg,
+            hardware=hardware,
+          )
+        else:
+          frac_valid_moves, cost_loss, vm_loss = self._train_batch_transfer(
+            iter=iter,
+            optimizer=optimizer,
+            opt_cfg=opt_cfg,
+            train_cfg=train_cfg,
+            hardware=hardware,
+            teacher_allocator=teacher_allocator
+          )
 
         if validation_hardware is not None:
           hardware = validation_hardware
@@ -296,13 +308,13 @@ class DirectAllocator:
     return data_log
   
 
-  def _train_batch(
+  def _train_batch_rl(
     self,
     iter: int,
     optimizer: torch.optim.Optimizer,
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
-    hardware: Hardware
+    hardware: Hardware,
   ) -> float:
     self.pred_model.train()
     cost_loss = 0
@@ -354,6 +366,47 @@ class DirectAllocator:
     total_moves = circuit.n_steps*train_cfg.batch_size
     return n_valid_moves/total_moves, cost_loss.item(), valid_move_loss.item()
   
+
+  def _train_batch_transfer(
+    self,
+    iter: int,
+    optimizer: torch.optim.Optimizer,
+    opt_cfg: DAConfig,
+    train_cfg: TrainConfig,
+    hardware: Hardware,
+    teacher_allocator: Optional[Any],
+  ) -> float:
+    self.pred_model.train()
+    action_log_probs = torch.empty((train_cfg.batch_size))
+
+    for batch_i in range(train_cfg.batch_size):
+      circuit = train_cfg.circ_sampler.sample()
+      alloc_reference = teacher_allocator.optimize(circuit, hardware)[0]
+      answers = alloc_reference[circuit.alloc_steps[:,0], circuit.alloc_steps[:,1]]
+      circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
+      print(
+        f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Optimizing {batch_i + 1}/{train_cfg.batch_size}",
+        end=''
+      )
+      allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
+      _, log_probs, _ = self._allocate(
+        allocations=allocations,
+        circ_embs=circ_embs,
+        alloc_steps=circuit.alloc_steps,
+        cfg=opt_cfg,
+        hardware=hardware,
+        ret_train_data=True,
+      )
+      action_log_probs[batch_i] = torch.sum(log_probs[torch.arange(log_probs.shape[0]), answers])
+
+    loss = torch.sum(action_log_probs)
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
+    optimizer.step()
+
+    return 1, loss.item(), 0
+
 
   def _validation(self, train_cfg: TrainConfig, hardware: Hardware) -> float:
     da_cfg = DAConfig()

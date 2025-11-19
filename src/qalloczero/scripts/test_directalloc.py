@@ -8,14 +8,15 @@ from sampler.randomcircuit import RandomCircuit
 from sampler.hardwaresampler import HardwareSampler
 from qalloczero.alg.ts import ModelConfigs
 from qalloczero.alg.directalloc import DirectAllocator, DAConfig
+from russo.tests.hungarian import HQA
 
 
 def test_direct_alloc():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -79,8 +80,7 @@ def test_direct_alloc():
   
   if test_train:
     allocator = DirectAllocator(
-      hardware,
-      device='cuda',
+      device='cpu',
       model_cfg=ModelConfigs(layers=[8,8,16,16,32,32,64,64,64]),
     )
     save_folder = "trained/direct_allocator"
@@ -99,7 +99,7 @@ def test_direct_alloc():
         # print_grad_each=5,
         # detailed_grad=False,
       )
-      train_data = allocator.train(train_cfg)
+      train_data = allocator.train(train_cfg, validation_hardware=hardware, teacher_allocator=HQA(True, False))
       save_folder = allocator.save(save_folder, overwrite=False)
       save_train_data(data=train_data, train_folder=save_folder)
     except KeyboardInterrupt:
