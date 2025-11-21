@@ -145,8 +145,8 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  testing_pred_model()
-  return
+  # testing_pred_model()
+  # return
   test_run = True
   test_train = False
 

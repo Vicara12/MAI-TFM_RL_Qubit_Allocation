@@ -2,6 +2,7 @@ import os
 import json
 import torch
 from typing import Optional
+from random import randint
 from sampler.hardwaresampler import HardwareSampler
 from sampler.randomcircuit import RandomCircuit
 from qalloczero.alg.directalloc import DirectAllocator
@@ -94,27 +95,22 @@ def train_model_da(architecture: list[int], name: str):
     device='cuda',
     model_cfg=ModelConfigs(layers=architecture),
   )
-  save_folder = f"trained/{name}"
-  try:
-    train_cfg = DirectAllocator.TrainConfig(
-      train_iters=2_000,
-      batch_size=64,
-      validation_size=16,
-      initial_noise=0.4,
-      noise_decrease_factor=0.995,
-      circ_sampler=RandomCircuit(num_lq=24, num_slices=4),
-      lr=2.5e-5,
-      invalid_move_penalty=0.1,
-      hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    )
-    train_data = allocator.train(train_cfg, validation_hardware=validation_hardware)
-    save_folder = allocator.save(save_folder, overwrite=False)
-    save_train_data(data=train_data, train_folder=save_folder)
-  except KeyboardInterrupt:
-    pass
-  except Exception:
-    allocator.save(save_folder, overwrite=False)
-    raise
+  val_sampler = RandomCircuit(num_lq=16, num_slices=32)
+  train_cfg = DirectAllocator.TrainConfig(
+    train_iters=1_000,
+    batch_size=4,
+    group_size=16,
+    validate_each=2, # !
+    validation_hardware=validation_hardware,
+    validation_circuits=[val_sampler.sample() for _ in range(64)],
+    store_path=f"trained/{name}",
+    initial_noise=0.4,
+    noise_decrease_factor=0.995,
+    circ_sampler=RandomCircuit(num_lq=32, num_slices=lambda: randint(8,32)),
+    lr=2.5e-5,
+    hardware_sampler=HardwareSampler(max_nqubits=32, range_ncores=[2,8]),
+  )
+  allocator.train(train_cfg)
 
 
 def optimize(allocator, hardware, circuit, cfg: Optional[TSConfig] = None):
