@@ -22,5 +22,5 @@ if __name__ == "__main__":
   # grid_search()
   # test_alphazero()
   # linear_search()
-  test_direct_alloc()
-  # validate()
+  # test_direct_alloc()
+  validate()

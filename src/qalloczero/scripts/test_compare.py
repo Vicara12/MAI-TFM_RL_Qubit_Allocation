@@ -13,15 +13,16 @@ def validate():
   torch.manual_seed(42)
   n_qubits = 16
   n_slices = 32
-  n_circuits = 64
+  n_circuits = 32
   core_caps = torch.tensor([4]*4, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     hqa = HQA(lookahead=True, verbose=False),
-    da_trained = DirectAllocator.load("trained/da_v4", device="cuda"),
-    # azero_trained =    AlphaZero.load("trained/da_v3", device="cpu"),
+    da_sequential = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+    azero =               AlphaZero.load("trained/da_v4", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )
@@ -47,8 +48,8 @@ def validate():
         results = algo.optimize_mult(circuits, cfg, hardware=hardware)
       else:
         raise Exception("Unrecognized algorithm type")
-    norm_res = [res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)]
+    norm_res = torch.tensor([res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)])
     norm_swaps = [
       count_swaps(swaps_from_alloc(res[0], n_cores))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
     ]
-    print(f" + t={Timer.get('t').time:.2f}s avg_cost={sum(norm_res)/len(norm_res):.4f} avg_swaps={sum(norm_swaps)/len(norm_swaps):.4f}")
+    print(f" + t={Timer.get('t').time:.2f}s avg_cost={norm_res.mean().item():.4f} ({norm_res.std().item():.2f}) avg_swaps={sum(norm_swaps)/len(norm_swaps):.4f}")
