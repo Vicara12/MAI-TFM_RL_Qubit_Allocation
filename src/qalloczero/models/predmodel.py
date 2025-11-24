@@ -138,10 +138,12 @@ class PredictionModel(torch.nn.Module):
     weighted = circuit_embs.unsqueeze(1) * mask.unsqueeze(-2)          # [B,C,Q,Q]
     affinities = weighted.sum(dim=-1)                                  # [B, C, Q]
     # Normalize
-    maximums = torch.max(affinities.reshape(prev_core.shape[0], -1),dim=-1).values
-    if (maximums != 0).any():
-      return affinities/maximums
-    return affinities
+    orig_shape = affinities.shape
+    affinities = affinities.reshape(prev_core.shape[0], -1)
+    maximums = torch.max(affinities, dim=-1).values
+    mask = (maximums != 0)
+    affinities[mask] /= maximums[mask].unsqueeze(-1)
+    return affinities.reshape(orig_shape)
 
 
   def _format_circuit_emb(

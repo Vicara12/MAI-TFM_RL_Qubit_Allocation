@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import warnings
+from enum import Enum
 from time import time
 from typing import Self, Tuple, Optional, Any
 from copy import deepcopy
@@ -26,6 +27,10 @@ class DAConfig:
 
 class DirectAllocator:
 
+  class Mode(Enum):
+    Sequential = 0
+    Parallel   = 1
+
   @dataclass
   class TrainConfig:
     train_iters: int
@@ -45,11 +50,13 @@ class DirectAllocator:
   def __init__(
     self,
     device: str = "cpu",
-    model_cfg: ModelConfigs = ModelConfigs()
+    model_cfg: ModelConfigs = ModelConfigs(),
+    mode: Mode = Mode.Sequential,
   ):
     self.model_cfg = model_cfg
     self.pred_model = PredictionModel(layers=model_cfg.layers)
     self.pred_model.to(device)
+    self.mode = mode
   
 
   @property
@@ -106,7 +113,40 @@ class DirectAllocator:
     return loaded
   
 
-  def _sample_action(
+  def set_mode(self, mode: Mode):
+    self.mode = mode
+    return self
+
+
+  def _sample_action_sequential(
+    self,
+    pol: torch.Tensor,
+    core_caps: torch.Tensor,
+    n_qubits: int,
+    cfg: DAConfig,
+  ) -> Tuple[int, torch.Tensor, torch.Tensor]:
+    # Set prior of cores that do not have space for this alloc to zero
+    valid_cores = (core_caps >= n_qubits)
+    assert valid_cores.any().item(), "No valid allocation possible"
+    if cfg.mask_invalid:
+      pol[~valid_cores] = 0
+    # Add exploration noise to the priors
+    if cfg.noise != 0:
+      noise = torch.abs(torch.randn(pol.shape, device=self.device))
+      noise[~valid_cores] = 0
+      pol = (1 - cfg.noise)*pol + cfg.noise*noise
+    sum_pol = pol.sum()
+    if cfg.mask_invalid and sum_pol < 1e-5:
+      pol = torch.zeros_like(pol)
+      pol[valid_cores] = 1/sum(valid_cores)
+      pass
+    else:
+      pol /= sum_pol
+    core = pol.argmax().item() if cfg.greedy else torch.distributions.Categorical(pol).sample()
+    return core, pol, valid_cores
+
+
+  def _sample_action_parallel(
     self,
     logits: torch.Tensor,
     core_caps: torch.Tensor,
@@ -135,7 +175,66 @@ class DirectAllocator:
     return qubit_set.item(), core.item()
 
 
-  def _allocate(
+  def _allocate_sequential(
+    self,
+    allocations: torch.Tensor,
+    circ_embs: torch.Tensor,
+    alloc_steps: torch.Tensor,
+    cfg: DAConfig,
+    hardware: Hardware,
+    ret_train_data: bool,
+  ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    core_caps_orig = hardware.core_capacities.to(self.device)
+    core_allocs = hardware.n_cores * torch.ones(
+      [hardware.n_qubits],
+      dtype=torch.long,
+      device=self.device,
+    )
+    prev_core_allocs = None
+    core_caps = None
+    if ret_train_data:
+      all_probs = []
+    prev_slice = -1
+    for (slice_idx, qubit0, qubit1, _) in alloc_steps:
+      if prev_slice != slice_idx:
+        prev_core_allocs = core_allocs
+        core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
+        core_caps = core_caps_orig.clone()
+      pol, _, log_pol = self.pred_model(
+        qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
+        prev_core_allocs=prev_core_allocs.unsqueeze(0),
+        current_core_allocs=core_allocs.unsqueeze(0),
+        core_capacities=core_caps.unsqueeze(0),
+        core_connectivity=hardware.core_connectivity.to(self.device),
+        circuit_emb=circ_embs[:,slice_idx],
+      )
+      pol = pol.squeeze(0)
+      log_pol = log_pol.squeeze(0)
+      n_qubits = (1 if qubit1 == -1 else 2)
+      action, pol, _ = self._sample_action_sequential(
+        pol=pol,
+        core_caps=core_caps,
+        n_qubits=n_qubits,
+        cfg=cfg
+      )
+      allocations[slice_idx,qubit0] = action
+      core_allocs[qubit0] = action
+      if qubit1 != -1:
+        allocations[slice_idx,qubit1] = action
+        core_allocs[qubit1] = action
+      if ret_train_data:
+        all_probs.append(log_pol)
+      if cfg.mask_invalid:
+        core_caps[action] = core_caps[action] - n_qubits
+        assert core_caps[action] >= 0, f"Illegal core caps: {core_caps}"
+      else:
+        core_caps[action] = max(0, core_caps[action] - n_qubits)
+      prev_slice = slice_idx
+    if ret_train_data:
+      return torch.stack(all_probs)
+
+
+  def _allocate_parallel(
     self,
     allocations: torch.Tensor,
     circ_embs: torch.Tensor,
@@ -143,7 +242,7 @@ class DirectAllocator:
     cfg: DAConfig,
     hardware: Hardware,
     ret_train_data: bool,
-  ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+  ) -> Optional[torch.Tensor]:
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = hardware.n_cores * torch.ones(
       [hardware.n_qubits],
@@ -171,7 +270,7 @@ class DirectAllocator:
           core_connectivity=dev_core_con,
           circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
         )
-        qubit_set, core = self._sample_action(
+        qubit_set, core = self._sample_action_parallel(
           logits=log_pol,
           core_caps=core_caps,
           n_qubits=2,
@@ -201,7 +300,7 @@ class DirectAllocator:
           core_connectivity=dev_core_con,
           circuit_emb=circ_embs[:,slice_idx,:,:],
         )
-        qubit_set, core = self._sample_action(
+        qubit_set, core = self._sample_action_parallel(
           logits=log_pol,
           core_caps=core_caps,
           n_qubits=1,
@@ -222,6 +321,34 @@ class DirectAllocator:
       return torch.stack(all_log_probs)
   
 
+  def _allocate(
+    self,
+    allocations: torch.Tensor,
+    circuit: Circuit,
+    cfg: DAConfig,
+    hardware: Hardware,
+    ret_train_data: bool,
+  ):
+    if self.mode == DirectAllocator.Mode.Sequential:
+      return self._allocate_sequential(
+        allocations=allocations,
+        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        alloc_steps=circuit.alloc_steps,
+        cfg=cfg,
+        hardware=hardware,
+        ret_train_data=ret_train_data,
+      )
+    else:
+      return self._allocate_parallel(
+        allocations=allocations,
+        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        alloc_slices=circuit.alloc_slices,
+        cfg=cfg,
+        hardware=hardware,
+        ret_train_data=ret_train_data
+      )
+
+
   def optimize(
     self,
     circuit: Circuit,
@@ -234,12 +361,10 @@ class DirectAllocator:
         f"circuit: {hardware.n_qubits} != {circuit.n_qubits}"
       ))
     self.pred_model.eval()
-    circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
     allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
     self._allocate(
       allocations=allocations,
-      circ_embs=circ_embs,
-      alloc_slices=circuit.alloc_slices,
+      circuit=circuit,
       cfg=cfg,
       hardware=hardware,
       ret_train_data=False,
@@ -298,24 +423,6 @@ class DirectAllocator:
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
 
-        # if teacher_allocator is None:
-        #   frac_valid_moves, cost_loss, vm_loss = self._train_batch_rl(
-        #     iter=iter,
-        #     optimizer=optimizer,
-        #     opt_cfg=opt_cfg,
-        #     train_cfg=train_cfg,
-        #     hardware=hardware,
-        #   )
-        # else:
-        #   frac_valid_moves, cost_loss, vm_loss = self._train_batch_transfer(
-        #     iter=iter,
-        #     optimizer=optimizer,
-        #     opt_cfg=opt_cfg,
-        #     train_cfg=train_cfg,
-        #     hardware=hardware,
-        #     teacher_allocator=teacher_allocator
-        #   )
-
         cost_loss = self._train_batch(
           pheader=pheader,
           optimizer=optimizer,
@@ -370,7 +477,7 @@ class DirectAllocator:
       json.dump(data_log, f, indent=2)
   
 
-  def _train_batch_rl(
+  def _train_batch(
     self,
     pheader: str,
     optimizer: torch.optim.Optimizer,
@@ -385,7 +492,6 @@ class DirectAllocator:
       hardware = train_cfg.hardware_sampler.sample()
       train_cfg.circ_sampler.num_lq = hardware.n_qubits
       circuit = train_cfg.circ_sampler.sample()
-      circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
       all_costs = torch.empty([train_cfg.group_size], device=self.device)
       action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
 
@@ -395,8 +501,7 @@ class DirectAllocator:
         allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
         log_probs = self._allocate(
           allocations=allocations,
-          circ_embs=circ_embs,
-          alloc_slices=circuit.alloc_slices,
+          circuit=circuit,
           cfg=opt_cfg,
           hardware=hardware,
           ret_train_data=True,
@@ -413,47 +518,6 @@ class DirectAllocator:
     optimizer.step()
     return loss.item()
   
-
-  def _train_batch_transfer(
-    self,
-    iter: int,
-    optimizer: torch.optim.Optimizer,
-    opt_cfg: DAConfig,
-    train_cfg: TrainConfig,
-    hardware: Hardware,
-    teacher_allocator: Optional[Any],
-  ) -> float:
-    self.pred_model.train()
-    action_log_probs = torch.empty((train_cfg.batch_size))
-
-    for batch_i in range(train_cfg.batch_size):
-      circuit = train_cfg.circ_sampler.sample()
-      alloc_reference = teacher_allocator.optimize(circuit, hardware)[0]
-      answers = alloc_reference[circuit.alloc_steps[:,0], circuit.alloc_steps[:,1]]
-      circ_embs = circuit.embedding.to(self.device).unsqueeze(0)
-      print(
-        f"\033[2K\r[{iter + 1}/{train_cfg.train_iters}] Optimizing {batch_i + 1}/{train_cfg.batch_size}",
-        end=''
-      )
-      allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-      _, log_probs, _ = self._allocate(
-        allocations=allocations,
-        circ_embs=circ_embs,
-        alloc_steps=circuit.alloc_steps,
-        cfg=opt_cfg,
-        hardware=hardware,
-        ret_train_data=True,
-      )
-      action_log_probs[batch_i] = torch.sum(log_probs[torch.arange(log_probs.shape[0]), answers])
-
-    loss = torch.sum(action_log_probs)
-    optimizer.zero_grad()
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
-    optimizer.step()
-
-    return 1, loss.item(), 0
-
 
   def _validation(self, train_cfg: TrainConfig) -> float:
     da_cfg = DAConfig()
