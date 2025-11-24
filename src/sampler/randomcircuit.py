@@ -20,7 +20,7 @@ class RandomCircuit(CircuitSampler):
   
 
   def sample(self) -> Circuit:
-    int_num_slices = self.num_slices() if self.num_slices is Callable else self.num_slices
+    int_num_slices = self.num_slices() if callable(self.num_slices) else self.num_slices
     circuit_slice_gates = []
     a,b = random.sample(range(0,self.num_lq_),2)
     for t in range(int_num_slices):

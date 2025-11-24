@@ -154,7 +154,8 @@ class PredictionModel(torch.nn.Module):
     ce_q0 = circuit_emb[torch.arange(B), qubits[:,0]] # [B,C,Q]
     ce_q1 = torch.zeros_like(ce_q0)                   # [B,C,Q]
     double_qubits = (qubits[:,1] != -1)
-    ce_q1[double_qubits] = circuit_emb[double_qubits, qubits[double_qubits,1]]
+    if double_qubits.any():
+      ce_q1[double_qubits] = circuit_emb[double_qubits, qubits[double_qubits,1]]
     ce_q0 = ce_q0.unsqueeze(1).expand(-1,C,-1)
     ce_q1 = ce_q1.unsqueeze(1).expand(-1,C,-1)
     return ce_q0, ce_q1
@@ -278,7 +279,7 @@ class PredictionModel(torch.nn.Module):
     key_embs, q0_embs, q1_embs = self._get_embeddings(inputs, qubits)
     projs = self._project(key_embs, q0_embs, q1_embs) # [B,C,Q]
     logits = projs.sum(dim=-1) # [B,C]
-    vals = torch.tensor([[1.22] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
+    vals = torch.tensor([[0] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:
       return logits, vals, log_probs
