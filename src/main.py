@@ -107,7 +107,7 @@ def train_model_da(architecture: list[int], name: str):
     store_path=f"trained/{name}",
     initial_noise=0.4,
     noise_decrease_factor=0.99,
-    circ_sampler=RandomCircuit(num_lq=24, num_slices=32),
+    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,32)),
     lr=5e-5,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
   )
