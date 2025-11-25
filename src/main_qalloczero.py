@@ -11,6 +11,7 @@ from qalloczero.scripts.test_directalloc import (
 )
 from qalloczero.scripts.test_compare import (
   validate,
+  benchmark
 )
 
 
@@ -21,6 +22,7 @@ if __name__ == "__main__":
   # test_cpp_engine()
   # grid_search()
   # test_alphazero()
-  # linear_search()
+  linear_search()
   # test_direct_alloc()
-  validate()
+  # validate()
+  # benchmark()

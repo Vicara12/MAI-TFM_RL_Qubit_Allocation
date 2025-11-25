@@ -346,9 +346,13 @@ auto TreeSearch::new_policy_and_val(
   int n_qubits = (q1 == -1 ? 1 : 2);
   auto valid_moves_mask = core_caps >= n_qubits;
   pol.index_put_({~valid_moves_mask}, at::tensor(0.f));
-  at::Tensor prob_sum = pol.sum(-1).unsqueeze(1);
-  pol /= prob_sum;
-
+  at::Tensor prob_sum = pol.sum(-1);
+  auto has_prob = (prob_sum > 1e-5);
+  auto uniform_mass = (1.f/valid_moves_mask.sum(-1).to(torch::kFloat)).unsqueeze(1).expand_as(pol);
+  pol /= prob_sum.unsqueeze(1);
+  auto replace_mask = (~has_prob).unsqueeze(1).expand_as(pol) & valid_moves_mask;
+  pol.index_put_({~has_prob, Slice()}, 0.f);
+  pol.masked_scatter_(replace_mask, uniform_mass.masked_select(replace_mask));
   return {pol, val};
 }
 
@@ -502,7 +506,7 @@ auto TreeSearch::ucb(
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
   float ucb = prob_a * std::sqrt(vc) / (1 + vc_act);
-  return q_v - ctx.cfg_.ucb_c1 * ucb;
+  return (2.0 / (q_v + 1) - 1) + ctx.cfg_.ucb_c1 * ucb;
 }
 
 
@@ -510,15 +514,15 @@ auto TreeSearch::select_child(
   const OptCtx &ctx,
   std::shared_ptr<const Node> current_node
 ) const -> std::tuple<std::shared_ptr<Node>, int> {
-  double min_ucb = std::numeric_limits<double>::infinity();
+  double max_ucb = -std::numeric_limits<double>::infinity();
   int best_action = -1;
 
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(ctx, current_node, action);
     assert(not std::isnan(ucb_value));
     assert(not std::isinf(ucb_value));
-    if (ucb_value < min_ucb) {
-      min_ucb = ucb_value;
+    if (ucb_value > max_ucb) {
+      max_ucb = ucb_value;
       best_action = action;
     }
   }

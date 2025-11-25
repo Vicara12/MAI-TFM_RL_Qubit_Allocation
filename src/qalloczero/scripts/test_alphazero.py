@@ -145,8 +145,6 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  # testing_pred_model()
-  # return
   test_run = True
   test_train = False
 
@@ -185,7 +183,7 @@ def test_alphazero():
   if test_run:
     cfg = TSConfig(
       target_tree_size=512,
-      noise=0.0,
+      noise=0.2,
       dirichlet_alpha=1.0,
       discount_factor=0.0,
       action_sel_temp=0,
@@ -193,10 +191,13 @@ def test_alphazero():
       ucb_c2=500,
     )
     # azero = AlphaZero.load("trained/direct_allocator", device="cpu")
-    circuit = sampler.sample()
+    # circuit = sampler.sample()
+    circuit = Circuit(slice_gates=(((15, 14), (2, 11), (3, 9)), ((14, 10),), ((9, 10),), ((10, 14),), ((14, 1), (4, 13), (3, 12)), ((13, 5), (11, 3)), ((13, 6), (15, 10)), ((15, 5), (12, 6))), n_qubits=16)
+    # orig: t=7.09s c=1.417 er=0.176 sw=9 (0.750)
     torch.manual_seed(42)
     with Timer.get('t'):
       allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=False)
+      # azero.optimize_mult([sampler.sample() for _ in range(10)], cfg, hardware=hardware)
     swaps = swaps_from_alloc(allocs, n_cores)
     n_swaps = count_swaps(swaps)
     check_sanity_swap(allocs, swaps)

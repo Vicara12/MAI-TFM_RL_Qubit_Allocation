@@ -16,6 +16,10 @@ class Circuit:
   n_qubits: int
 
 
+  def __str__(self):
+    return f"Circuit(slice_gates={self.slice_gates}, n_qubits={self.n_qubits})"
+
+
   @staticmethod
   def from_qasm(qasm_file: str, n_qubits: Optional[int] = None) -> Circuit:
     circuit = QuantumCircuit.from_qasm_file(qasm_file)

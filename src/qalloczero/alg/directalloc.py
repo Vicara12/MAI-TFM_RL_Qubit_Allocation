@@ -183,6 +183,7 @@ class DirectAllocator:
     cfg: DAConfig,
     hardware: Hardware,
     ret_train_data: bool,
+    verbose: bool = False,
   ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = hardware.n_cores * torch.ones(
@@ -195,7 +196,12 @@ class DirectAllocator:
     if ret_train_data:
       all_probs = []
     prev_slice = -1
-    for (slice_idx, qubit0, qubit1, _) in alloc_steps:
+    for step, (slice_idx, qubit0, qubit1, _) in enumerate(alloc_steps):
+
+      if verbose:
+        print((f"\033[2K\r - Optimization step {step+1}/{len(alloc_steps)} "
+               f"({int(100*(step+1)/len(alloc_steps))}%)"), end="")
+        
       if prev_slice != slice_idx:
         prev_core_allocs = core_allocs
         core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
@@ -230,6 +236,8 @@ class DirectAllocator:
       else:
         core_caps[action] = max(0, core_caps[action] - n_qubits)
       prev_slice = slice_idx
+    if verbose:
+      print()
     if ret_train_data:
       return torch.stack(all_probs)
 
@@ -242,6 +250,7 @@ class DirectAllocator:
     cfg: DAConfig,
     hardware: Hardware,
     ret_train_data: bool,
+    verbose: bool = False,
   ) -> Optional[torch.Tensor]:
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = hardware.n_cores * torch.ones(
@@ -254,6 +263,9 @@ class DirectAllocator:
     if ret_train_data:
       all_log_probs = []
     dev_core_con = hardware.core_connectivity.to(self.device)
+    step = 0
+    n_steps = sum(len(s[1])+len([2]) for s in alloc_slices)
+    
     for slice_idx, (_, free_qubits, paired_qubits) in enumerate(alloc_slices):
       prev_core_allocs = core_allocs
       core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
@@ -262,6 +274,9 @@ class DirectAllocator:
       free_qubits = list(free_qubits)
       
       while paired_qubits:
+        if verbose:
+          print((f"\033[2K\r - Optimization step {step+1}/{n_steps} ({int(100*(step+1)/n_steps)}%)"), end="")
+          step += 1
         _, _, log_pol = self.pred_model(
           qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
           prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
@@ -290,6 +305,10 @@ class DirectAllocator:
         del paired_qubits[qubit_set]
       
       while free_qubits:
+        if verbose:
+          print((f"\033[2K\r - Optimization step {step+1}/{n_steps} ({int(100*(step+1)/n_steps)}%)"), end="")
+          step += 1
+
         qubits = torch.tensor(free_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
         qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
         _, _, log_pol = self.pred_model(
@@ -316,7 +335,8 @@ class DirectAllocator:
         else:
           core_caps[core] = max(0, core_caps[core])
         del free_qubits[qubit_set]
-    
+    if verbose:
+      print()
     if ret_train_data:
       return torch.stack(all_log_probs)
   
@@ -328,6 +348,7 @@ class DirectAllocator:
     cfg: DAConfig,
     hardware: Hardware,
     ret_train_data: bool,
+    verbose: bool = False
   ):
     if self.mode == DirectAllocator.Mode.Sequential:
       return self._allocate_sequential(
@@ -337,6 +358,7 @@ class DirectAllocator:
         cfg=cfg,
         hardware=hardware,
         ret_train_data=ret_train_data,
+        verbose=verbose,
       )
     else:
       return self._allocate_parallel(
@@ -345,7 +367,8 @@ class DirectAllocator:
         alloc_slices=circuit.alloc_slices,
         cfg=cfg,
         hardware=hardware,
-        ret_train_data=ret_train_data
+        ret_train_data=ret_train_data,
+        verbose=verbose,
       )
 
 
@@ -354,6 +377,7 @@ class DirectAllocator:
     circuit: Circuit,
     hardware: Hardware,
     cfg: DAConfig = DAConfig(),
+    verbose: bool = False
   ) -> Tuple[torch.Tensor, float]:
     if circuit.n_qubits != hardware.n_qubits:
       raise Exception((
@@ -368,6 +392,7 @@ class DirectAllocator:
       cfg=cfg,
       hardware=hardware,
       ret_train_data=False,
+      verbose=verbose,
     )
     cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
     return allocations, cost

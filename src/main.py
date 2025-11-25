@@ -94,21 +94,22 @@ def train_model_da(architecture: list[int], name: str):
   allocator = DirectAllocator(
     device='cuda',
     model_cfg=ModelConfigs(layers=architecture),
+    mode=DirectAllocator.Mode.Sequential,
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=1_000,
+    train_iters=500,
     batch_size=4,
-    group_size=16,
+    group_size=32,
     validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(64)],
     store_path=f"trained/{name}",
-    initial_noise=0.8,
+    initial_noise=0.4,
     noise_decrease_factor=0.99,
-    circ_sampler=RandomCircuit(num_lq=32, num_slices=lambda: randint(8,32)),
-    lr=5e-4,
-    hardware_sampler=HardwareSampler(max_nqubits=32, range_ncores=[2,8]),
+    circ_sampler=RandomCircuit(num_lq=24, num_slices=32),
+    lr=5e-5,
+    hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
   )
   allocator.train(train_cfg)
 
@@ -208,7 +209,7 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  train_model_da(architecture=[16,32,64], name="da")
+  train_model_da(architecture=[16,32], name="da")
 
   ''' Benchmark with real circuits using Direct Allocation '''
   # benchmark_da("trained/da_v3")
