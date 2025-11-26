@@ -321,8 +321,8 @@ auto TreeSearch::select_action(
   // std::cout << ")" << std::endl;
   // std::cout << " => Expected allocation cost: " << node->value() << std::endl;
 
-  if (action != *node->best_action)
-    std::cout << "Did not select the best action!" << std::endl;
+  // if (action != *node->best_action)
+  //   std::cout << "Did not select the best action!" << std::endl;
 
   return {action, visit_counts};
 }
@@ -498,8 +498,9 @@ auto TreeSearch::backprop(
   std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path,
   float discount_factor
 ) const -> void {
-  for (int i = search_path.size() - 2; i >= 0; i--) {
+  for (int i = search_path.size() - 1; i >= 0; i--) {
     auto node = std::get<0>(search_path[i]);
+    node->visit_count += 1;
     node->update_value(discount_factor);
   }
 }

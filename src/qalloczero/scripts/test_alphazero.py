@@ -196,7 +196,7 @@ def test_alphazero():
     # orig: t=7.09s c=1.417 er=0.176 sw=9 (0.750)
     torch.manual_seed(42)
     with Timer.get('t'):
-      allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=False)
+      allocs, cost, _, er = azero.optimize(circuit, cfg, hardware=hardware, verbose=True)
       # azero.optimize_mult([sampler.sample() for _ in range(10)], cfg, hardware=hardware)
     swaps = swaps_from_alloc(allocs, n_cores)
     n_swaps = count_swaps(swaps)
