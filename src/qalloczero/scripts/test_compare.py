@@ -80,10 +80,10 @@ def benchmark():
   )
 
   algos = dict(
-    hqa = HQA(lookahead=True, verbose=False),
-    da_sequential = DirectAllocator.load("trained/da_v5", device="cuda").set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v5", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
-    azero =               AlphaZero.load("trained/da_v5", device="cpu"),
+    # hqa = HQA(lookahead=True, verbose=True),
+    da_sequential = DirectAllocator.load("trained/da_v2", device="cuda").set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v2", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
+    # azero =               AlphaZero.load("trained/da_v2", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )

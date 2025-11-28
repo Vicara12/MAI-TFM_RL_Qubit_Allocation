@@ -24,5 +24,5 @@ if __name__ == "__main__":
   # test_alphazero()
   # linear_search()
   # test_direct_alloc()
-  validate()
-  # benchmark()
+  # validate()
+  benchmark()

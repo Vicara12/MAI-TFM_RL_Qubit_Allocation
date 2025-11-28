@@ -42,6 +42,7 @@ class DirectAllocator:
     store_path: str
     initial_noise: float
     noise_decrease_factor: int
+    min_noise: float
     circ_sampler: CircuitSampler
     lr: float
     inv_mov_penalization: float
@@ -345,7 +346,7 @@ class DirectAllocator:
           core_caps[core] = max(0, core_caps[core])
         del free_qubits[qubit_set]
     if verbose:
-      print()
+      print('\033[2K\r', end='')
     if ret_train_data:
       return torch.stack(all_log_probs), torch.tensor(all_valid)
   
@@ -454,6 +455,7 @@ class DirectAllocator:
         inv_mov_penalization=train_cfg.inv_mov_penalization,
         hws_nqubits=train_cfg.hardware_sampler.max_nqubits,
         hws_range_ncores=train_cfg.hardware_sampler.range_ncores,
+        min_noise=train_cfg.min_noise,
       ),
       val_cost = [],
       loss = [],
@@ -470,7 +472,7 @@ class DirectAllocator:
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
 
-        loss, cost_loss, val_loss = self._train_batch(
+        loss, cost_loss, val_loss, vm_ratio = self._train_batch(
           pheader=pheader,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
@@ -489,12 +491,12 @@ class DirectAllocator:
             best_model = self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
           else:
             p = ttest_ind(val_cost.numpy(), best_model['val_cost'].numpy(), equal_var=False)[1]
-            if p < 0.05:
+            if p < 0.2:
               if vc_mean < best_model['vc_mean']:
                 print(f"better than prev {best_model['vc_mean']:.4f} with p={p:.3f}, updating and ", end='')
                 best_model = self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
               else:
-                print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, backtracking")
+                print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}")
                 # self.pred_model.load_state_dict(best_model['model_state'])
                 # optimizer.load_state_dict(best_model['opt_state'])
                 # opt_cfg.noise = best_model['noise']
@@ -507,14 +509,15 @@ class DirectAllocator:
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - it - 1)
 
         print((
-          f"{pheader} l={loss:.1f} (c={cost_loss:.1f} v={val_loss:.1f}) \t n={opt_cfg.noise:.3f} t={self.iter_timer.time:.2f}s "
+          f"{pheader} l={loss:.1f} (c={cost_loss:.1f} v={val_loss:.1f}) \t n={opt_cfg.noise:.3f} "
+          f"vm={vm_ratio:.2f} t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
         
         data_log['loss'].append(cost_loss)
         data_log['noise'].append(opt_cfg.noise)
         data_log['t'].append(time() - init_t)
-        opt_cfg.noise *= train_cfg.noise_decrease_factor
+        opt_cfg.noise = max(train_cfg.min_noise, opt_cfg.noise*train_cfg.noise_decrease_factor)
 
     except KeyboardInterrupt as e:
       if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
@@ -535,6 +538,7 @@ class DirectAllocator:
     n_total = train_cfg.batch_size*train_cfg.group_size
     cost_loss = 0
     valid_loss = 0
+    valid_moves_ratio = 0
 
     for batch_i in range(train_cfg.batch_size):
       hardware = train_cfg.hardware_sampler.sample()
@@ -559,6 +563,7 @@ class DirectAllocator:
         all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
         action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
         inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+        valid_moves_ratio += valid_moves.mean().item()
 
       all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
       cost_loss += torch.sum(all_costs*action_log_probs)
@@ -568,7 +573,7 @@ class DirectAllocator:
     loss.backward()
     torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
     optimizer.step()
-    return loss.item(), cost_loss.item(), valid_loss.item()
+    return loss.item(), cost_loss.item(), valid_loss.item(), valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
   
 
   def _validation(self, train_cfg: TrainConfig) -> float:
