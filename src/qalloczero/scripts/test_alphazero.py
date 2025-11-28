@@ -164,11 +164,11 @@ def test_alphazero():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
-  # azero = AlphaZero.load("trained/da", device="cpu")
-  azero = AlphaZero(
-    device='cpu',
-    backend=AlphaZero.Backend.Cpp,
-  )
+  azero = AlphaZero.load("trained/da_v5", device="cpu")
+  # azero = AlphaZero(
+  #   device='cpu',
+  #   backend=AlphaZero.Backend.Cpp,
+  # )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   cfg = TSConfig(
     target_tree_size=64,
