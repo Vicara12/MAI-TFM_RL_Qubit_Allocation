@@ -237,7 +237,7 @@ class DirectAllocator:
         core_caps[action] = max(0, core_caps[action] - n_qubits)
       prev_slice = slice_idx
     if verbose:
-      print()
+      print('\033[2K\r', end='')
     if ret_train_data:
       return torch.stack(all_probs)
 

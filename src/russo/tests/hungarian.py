@@ -75,7 +75,7 @@ def hungarian_assignement(
   
   for t in range(1, len(slices)):
     if verbose:
-      print(f" - Slice {t+1}/{len(slices)}")
+      print(f"\033[2K\r - Slice {t+1}/{len(slices)}", end='')
     for q1, q2 in slices[t]:
       if current[q1] != current[q2]:
         unfeasible_gates.append((q1, q2))
@@ -152,7 +152,8 @@ def hungarian_assignement(
     
     assert sum(cur_capacities) == 0, f"Error: Sum of cur_capacities is not 0 but {sum(cur_capacities)}"
     assignments.append(current.copy())
-  
+  if verbose:
+    print('\033[2K\r', end='')
   return assignments
 
 

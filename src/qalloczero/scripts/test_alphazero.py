@@ -145,11 +145,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  test_run = True
-  test_train = False
+  # test_run = True
+  # test_train = False
 
-  # test_run = False
-  # test_train = True
+  test_run = False
+  test_train = True
 
   test_parallel = False
 
@@ -235,11 +235,11 @@ def test_alphazero():
   if test_train:
     cfg = TSConfig(
       target_tree_size=512,
-      noise=1,
-      dirichlet_alpha=0.25,
+      noise=0.2,
+      dirichlet_alpha=1.0,
       discount_factor=0.0,
       action_sel_temp=0,
-      ucb_c1=0.2,
+      ucb_c1=0.125,
       ucb_c2=500,
     )
     # azero = AlphaZero.load("trained/azero_finetune", device="cpu")
@@ -256,7 +256,7 @@ def test_alphazero():
         n_data_augs=1,
         circ_sampler=sampler,
         hardware_sampler=hardware_sampler,
-        noise_decrease_factor=0.975,
+        noise_decrease_factor=1.0,
         lr=5e-5,
         ts_cfg=cfg,
         # print_grad_each=5,

@@ -182,8 +182,9 @@ auto TreeSearch::optimize(
       tdata->value[step][0] = action_cost;
     }
   }
+
   if (verbose)
-    std::cout << std::endl;
+    std::cout << "\033[2K\r";
 
   if (ret_train_data) {
     // Compute total remaining cost for each step and normalize
