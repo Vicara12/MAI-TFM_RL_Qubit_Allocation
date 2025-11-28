@@ -13,26 +13,37 @@ def validate():
   torch.manual_seed(42)
   n_qubits = 16
   n_slices = 32
-  n_circuits = 32
+  n_circuits = 16
   core_caps = torch.tensor([4]*4, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=False),
-    da_sequential = DirectAllocator.load("trained/da_v5", device="cuda").set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v5", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
-    # azero =               AlphaZero.load("trained/da_v5", device="cpu"),
+    # da_seq_v  = DirectAllocator.load("trained/da",    device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    da_seq_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+
+    # da_par_v  = DirectAllocator.load("trained/da"   , device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+    # da_par_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+    # da_par_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+    # da_par_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+
+    # az_v  = AlphaZero.load("trained/da",    device="cpu"),
+    # az_v2 = AlphaZero.load("trained/da_v2", device="cpu"),
+    # az_v4 = AlphaZero.load("trained/da_v4", device="cpu"),
+    az_v5 = AlphaZero.load("trained/da_v5", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )
   cfg = TSConfig(
-    target_tree_size=1024,
+    target_tree_size=512,
     noise=0.2,
     dirichlet_alpha=1.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.15,
+    ucb_c1=0.125,
     ucb_c2=500,
   )
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)

@@ -309,22 +309,6 @@ auto TreeSearch::select_action(
       action = torch::multinomial(probs, /*num_samples=*/1).item<int>();
   }
 
-  // std::cout << " => Action's values:";
-  // for (const auto& [action, _] : *node->children) {
-  //   float q_v = (node->get_child(action)->value() + node->action_cost(action));
-  //   std::cout << " (" << visit_counts[action].item<float>() << " | " << q_v << ") ";
-  // }
-  // std::cout << std::endl;
-
-  // std::cout << " => Selecting action " << action << " visit counts (";
-  // for (int i = 0; i < node->core_caps->size(0); i++)
-  //   std::cout << visit_counts[i].item<float>() << " ";
-  // std::cout << ")" << std::endl;
-  // std::cout << " => Expected allocation cost: " << node->value() << std::endl;
-
-  // if (action != *node->best_action)
-  //   std::cout << "Did not select the best action!" << std::endl;
-
   return {action, visit_counts};
 }
 
@@ -410,9 +394,13 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
   // The prev to terminal node has no next step, but it does have children which
   // contains the cost of each of the actions that can be taken from it
   bool pre_terminal = (node->alloc_step == (ctx.n_steps_ - 1));
-  int slice_idx_children;
-  if (not pre_terminal)
+  int slice_idx_children, q0_child, q1_child, rem_g_child;
+  if (not pre_terminal) {
     slice_idx_children = ctx.alloc_steps_[node->alloc_step+1][0].item<int>();
+    q0_child = ctx.alloc_steps_[node->alloc_step+1][1].item<int>();
+    q1_child = ctx.alloc_steps_[node->alloc_step+1][2].item<int>();
+    rem_g_child = ctx.alloc_steps_[node->alloc_step+1][3].item<int>();
+  }
   
   std::vector<at::Tensor> curr_allocs_v;
   std::vector<at::Tensor> core_caps_v;
@@ -457,9 +445,9 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
   if (not children_v.empty()) {
     auto [pols, vals] = new_policy_and_val(
       ctx,
-      qubit0,
-      qubit1,
-      remaining_gates,
+      q0_child,
+      q1_child,
+      rem_g_child,
       slice_idx_children,
       *children_v[0]->prev_allocs, // All children have the same prev_allocs
       at::stack(curr_allocs_v, 0),
@@ -518,7 +506,7 @@ auto TreeSearch::ucb(
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
   float ucb = prob_a * std::sqrt(vc) / (1 + vc_act);
-  return (2.0 / (q_v + 1) - 1) + ctx.cfg_.ucb_c1 * ucb;
+  return q_v - ctx.cfg_.ucb_c1 * ucb;
 }
 
 
@@ -526,15 +514,15 @@ auto TreeSearch::select_child(
   const OptCtx &ctx,
   std::shared_ptr<const Node> current_node
 ) const -> std::tuple<std::shared_ptr<Node>, int> {
-  double max_ucb = -std::numeric_limits<double>::infinity();
+  double min_ucb = std::numeric_limits<double>::infinity();
   int best_action = -1;
 
   for (const auto& [action, _] : *current_node->children) {
     double ucb_value = ucb(ctx, current_node, action);
     assert(not std::isnan(ucb_value));
     assert(not std::isinf(ucb_value));
-    if (ucb_value > max_ucb) {
-      max_ucb = ucb_value;
+    if (ucb_value < min_ucb) {
+      min_ucb = ucb_value;
       best_action = action;
     }
   }

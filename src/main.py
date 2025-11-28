@@ -98,7 +98,7 @@ def train_model_da(architecture: list[int], name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=1_000,
+    train_iters=2_000,
     batch_size=2,
     group_size=32,
     validate_each=25,
@@ -106,7 +106,7 @@ def train_model_da(architecture: list[int], name: str):
     validation_circuits=[val_sampler.sample() for _ in range(64)],
     store_path=f"trained/{name}",
     initial_noise=0.20,
-    noise_decrease_factor=0.995,
+    noise_decrease_factor=0.999,
     circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,32)),
     lr=5e-5,
     inv_mov_penalization=0.3,

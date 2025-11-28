@@ -417,7 +417,7 @@ class DirectAllocator:
     optimizer: torch.optim.Optimizer
   ):
     vc_mean=val_cost.mean().item()
-    chkpt_name = f"checkpt_{it}_{int(vc_mean*1000)}.pt"
+    chkpt_name = f"checkpt_{it+1}_{int(vc_mean*1000)}.pt"
     torch.save(self.pred_model.state_dict(), os.path.join(save_path, chkpt_name))
     best_model = dict(
       val_cost=val_cost,
@@ -496,12 +496,14 @@ class DirectAllocator:
                 print(f"better than prev {best_model['vc_mean']:.4f} with p={p:.3f}, updating and ", end='')
                 best_model = self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
               else:
-                print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}")
+                print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
+                self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
                 # self.pred_model.load_state_dict(best_model['model_state'])
                 # optimizer.load_state_dict(best_model['opt_state'])
                 # opt_cfg.noise = best_model['noise']
             else:
-              print(f"not enough significance p={p:.3f}, continuing")
+              print(f"not enough significance wrt. prev {best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
+              self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
           with open(os.path.join(save_path, "train_data.json"), "w") as f:
             json.dump(data_log, f, indent=2)
 
