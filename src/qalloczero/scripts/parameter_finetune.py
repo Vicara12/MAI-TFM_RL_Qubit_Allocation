@@ -18,8 +18,8 @@ def linear_search():
     # target_tree_size = [4, 8, 16, 32, 64 ,128, 256, 512, 1024, 2048, 4096, 8192],
     # target_tree_size = [1024, 2048, 4096, 8192],
     noise=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
-    dirichlet_alpha=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7, 0.9, 1, 1.1, 1.2, 1.3],
-    discount_factor=[0, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    # dirichlet_alpha=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7, 0.9, 1, 1.1, 1.2, 1.3],
+    # discount_factor=[0, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
     # action_sel_temp=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
     # ucb_c1=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3, 3.5],
     # ucb_c2=[50, 500, 1_000, 5_000, 10_000, 15_000, 19_652, 20_000, 25_000, 30_000, 40_000],
@@ -55,12 +55,12 @@ def linear_search():
   #   ucb_c2=500,
   # )
   cfg_params = dict(
-    target_tree_size=512,
+    target_tree_size=216,
     noise=0.2,
     dirichlet_alpha=1.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.2,
+    ucb_c1=0.1,
     ucb_c2=500,
   )
   # ignore_params = ['target_tree_size', 'action_sel_temp']
@@ -84,7 +84,7 @@ def linear_search():
       avg_exp_nodes = get_mean(2)
       avg_expl_ratio = get_mean(3)
       results_param[value] = (avg_cost, avg_exp_nodes, avg_expl_ratio)
-      print(f" - {value:.3f}: \tc={avg_cost:.2f} \ten={avg_exp_nodes:.2f} \ter={avg_expl_ratio:.2f} \tt={Timer.get('t').time:.2f}")
+      print(f" - {value:.3f}: \tc={avg_cost:.4f} \ten={avg_exp_nodes:.2f} \ter={avg_expl_ratio:.2f} \tt={Timer.get('t').time:.2f}")
     best = min(results_param.items(), key=lambda x: x[1][0])
     print(f" + Using best: {best[0]}")
     results[param] = results_param

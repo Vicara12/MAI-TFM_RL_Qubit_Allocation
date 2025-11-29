@@ -13,8 +13,7 @@ struct TreeSearch::Node {
   // Key is the action (core allocation) and value are the resulting node (state) and action cost
   std::optional<std::map<int, std::tuple<std::shared_ptr<Node>, float>>> children = std::nullopt;
   bool terminal = false;
-  float value;
-  std::optional<int> best_action;
+  float value_sum;
   int visit_count = 0;
   int alloc_step = -1;
   int slice_idx = -1;
@@ -32,7 +31,7 @@ struct TreeSearch::Node {
     else
       std::cout << "   None" << std::endl;
     std::cout << " - terminal: " << (terminal ? "true" : "false") << std::endl
-              << " - value: " << value << std::endl
+              << " - value_sum: " << value_sum << std::endl
               << " - visit count: " << visit_count << std::endl
               << " - alloc_step: " << alloc_step << std::endl
               << " - slice_idx: " << slice_idx << std::endl;
@@ -66,20 +65,7 @@ struct TreeSearch::Node {
   }
 
 
-  auto update_value(float discount_factor) -> void {
-    if (not expanded())
-      return;
-
-    for (const auto& [action, child_edge] : *children) {
-      float child_value = std::get<0>(child_edge)->value;
-      float action_cost = std::get<1>(child_edge);
-      float q_a = action_cost + (1 - discount_factor) * child_value;
-      if (value > q_a) {
-        value = q_a;
-        best_action = action;
-      }
-    }
-  }
+  auto value() const -> float {return (terminal ? 0 : value_sum/(visit_count+1));}
 
 
   auto expanded() const -> bool {return children.has_value();}
@@ -378,7 +364,7 @@ auto TreeSearch::build_root(const OptCtx &ctx) const -> std::shared_ptr<Node> {
     root->core_caps->unsqueeze(0)
   );
   root->policy = pol[0].cpu();
-  root->value = val[0].item<float>();
+  root->value_sum = val[0].item<float>();
   return root;
 }
 
@@ -455,7 +441,7 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
     );
     for (int i = 0; i < children_v.size(); i++) {
       children_v[i]->policy = pols[i];
-      children_v[i]->value = vals[i].item<float>();
+      children_v[i]->value_sum = vals[i].item<float>();
     }
   }
 }
@@ -487,10 +473,17 @@ auto TreeSearch::backprop(
   std::vector<std::tuple<std::shared_ptr<Node>, int>>& search_path,
   float discount_factor
 ) const -> void {
-  for (int i = search_path.size() - 1; i >= 0; i--) {
+  // Terminal nodes need to be updated because at the last alloc we need to know visit count
+  if (std::get<0>(search_path.back())->terminal)
+    std::get<0>(search_path.back())->visit_count += 1;
+
+  for (int i = search_path.size() - 2; i >= 0; i--) {
     auto node = std::get<0>(search_path[i]);
+    auto next_node = std::get<0>(search_path[i+1]);
+    int action = std::get<1>(search_path[i+1]);
+    float action_cost = node->action_cost(action);
+    node->value_sum +=  action_cost + (1 - discount_factor) * next_node->value();
     node->visit_count += 1;
-    node->update_value(discount_factor);
   }
 }
 
@@ -501,7 +494,7 @@ auto TreeSearch::ucb(
   int action
 ) const -> float {
   float rem_gates = ctx.alloc_steps_[node->alloc_step][3].item<float>();
-  float q_v = node->value / (rem_gates+1);
+  float q_v = (node->get_child(action)->value() + node->action_cost(action)) / (rem_gates+1);
   float prob_a = (*node->policy)[action].item<float>();
   float vc = node->visit_count;
   float vc_act = node->get_child(action)->visit_count;
