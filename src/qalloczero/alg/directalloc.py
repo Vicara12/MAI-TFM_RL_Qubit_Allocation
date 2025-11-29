@@ -502,7 +502,7 @@ class DirectAllocator:
                 # optimizer.load_state_dict(best_model['opt_state'])
                 # opt_cfg.noise = best_model['noise']
             else:
-              print(f"not enough significance wrt. prev {best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
+              print(f"not enough significance wrt prev={best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
               self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
           with open(os.path.join(save_path, "train_data.json"), "w") as f:
             json.dump(data_log, f, indent=2)
@@ -565,7 +565,7 @@ class DirectAllocator:
         all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
         action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
         inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
-        valid_moves_ratio += valid_moves.mean().item()
+        valid_moves_ratio += valid_moves.float().mean().item()
 
       all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
       cost_loss += torch.sum(all_costs*action_log_probs)
