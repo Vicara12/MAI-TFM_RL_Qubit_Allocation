@@ -98,7 +98,7 @@ def train_model_da(allocator, name: str):
     group_size=32,
     validate_each=25,
     validation_hardware=validation_hardware,
-    validation_circuits=[val_sampler.sample() for _ in range(64)],
+    validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f"trained/{name}",
     initial_noise=0.20,
     noise_decrease_factor=0.9975,
@@ -206,7 +206,11 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  allocator = DirectAllocator(device='cuda', model_cfg=ModelConfigs(layers=[16,32,64,128]), mode=DirectAllocator.Mode.Sequential)
+  allocator = DirectAllocator(
+    device='cpu',
+    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=4),
+    mode=DirectAllocator.Mode.Sequential,
+  )
   train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''

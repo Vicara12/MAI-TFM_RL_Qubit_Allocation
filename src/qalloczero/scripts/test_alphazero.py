@@ -18,9 +18,7 @@ def testing_pred_model():
     [0,1],
     [1,0],
   ], dtype=torch.float)
-  pred_model = PredictionModel(
-    layers=[8,16,32]
-  )
+  pred_model = PredictionModel(embed_size=32, num_heads=4, num_layers=4)
   pred_model.eval()
   qubits = torch.tensor([
     [1, 0],

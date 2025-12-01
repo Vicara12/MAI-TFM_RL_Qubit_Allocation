@@ -29,7 +29,9 @@ class TSTrainData:
 
 @dataclass
 class ModelConfigs:
-    layers: List[int] = field(default_factory=lambda: [16, 32, 64])
+    embed_size: int = 32
+    num_heads: int = 4
+    num_layers: int = 4
 
 
 class TSEngine(ABC):

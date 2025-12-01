@@ -3,21 +3,6 @@ import torch
 
 
 
-class EmbedModel(torch.nn.Module):
-  def __init__(self, layer_sizes: List[int]):
-    super().__init__()
-    self.layers = []
-    for (prev_sz, next_sz) in zip(layer_sizes[:-1], layer_sizes[1:]):
-      self.layers.append(torch.nn.Linear(prev_sz, next_sz))
-      self.layers.append(torch.nn.ReLU())
-    self.layers.append(torch.nn.LayerNorm(layer_sizes[-1]))
-    self.layers = torch.nn.Sequential(*self.layers)
-
-  def forward(self, x):
-    return self.layers(x)
-
-
-
 class PredictionModel(torch.nn.Module):
   ''' For each qubit and time slice, output core allocation probability density and value of state.
 
@@ -39,13 +24,33 @@ class PredictionModel(torch.nn.Module):
   '''
 
   def __init__(
-      self,
-      layers: List[int],
+    self,
+    embed_size: int,
+    num_heads: int,
+    num_layers: int,
   ):
     super().__init__()
-    layers = [8] + layers
-    self.ff_key = EmbedModel(layers)
-    self.ff_query = EmbedModel(layers)
+    self.h = 8 # Size of the feature space (number of features)
+    self.ff_up = torch.nn.Linear(self.h, embed_size)
+    self.ff_up_q = torch.nn.Linear(self.h, embed_size)
+    self.ff_down = torch.nn.Linear(embed_size, 1)
+    encoder_layer = torch.nn.TransformerEncoderLayer(
+      d_model=embed_size,
+      nhead=num_heads,
+      batch_first=True
+    )
+    self.key_transf = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+    core_layer = torch.nn.TransformerEncoderLayer(
+      d_model=embed_size,
+      nhead=num_heads,
+      batch_first=True
+    )
+    self.core_transf = torch.nn.TransformerEncoder(core_layer, num_layers=num_layers)
+    self.mha = torch.nn.MultiheadAttention(
+      embed_dim=embed_size,
+      num_heads=num_heads,
+      batch_first=True
+    )
     self.output_logits_ = False
 
 
@@ -192,7 +197,7 @@ class PredictionModel(torch.nn.Module):
       core_attraction.unsqueeze(-1),
       ce_q0.unsqueeze(-1),
       ce_q1.unsqueeze(-1),
-    ], dim=-1) # [B,C,Q,8]
+    ], dim=-1) # [B,C,Q,h]
 
 
   def _extract_qubit_inputs(self, idx: torch.Tensor, inputs: torch.Tensor, C: int) -> torch.Tensor:
@@ -200,44 +205,48 @@ class PredictionModel(torch.nn.Module):
     # it takes to do this
     input_size = inputs.shape[-1]
     ix_per_core = idx.unsqueeze(-1).expand(-1,C)
-    idx_expanded = ix_per_core.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, input_size) # [B, C, 1, 8]
-    result = torch.gather(inputs, dim=2, index=idx_expanded.type(torch.long))  # [B, C, 1, 8]
-    return result.squeeze(2)  # [B, C, 8]
+    idx_expanded = ix_per_core.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, input_size) # [B, C, 1, h]
+    result = torch.gather(inputs, dim=2, index=idx_expanded.type(torch.long))  # [B, C, 1, h]
+    return result.squeeze(2)  # [B, C, h]
 
 
-  def _get_embeddings(self, inputs, qubits) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+  def _get_embeddings(self, inputs, qubits) -> Tuple[torch.Tensor, torch.Tensor]:
     (B,C,Q,_) = inputs.shape
 
-    key_embs = self.ff_key(
-      inputs.reshape(-1,8) # [B*C*Q,8]
+    key_embs = self.ff_up(
+      inputs.reshape(B*C*Q,self.h) # [B*C*Q,h]
     ).reshape(B,C,Q,-1) # [B,C,Q,H]
 
-    q0_inputs = self._extract_qubit_inputs(qubits[:,0], inputs, C) # [B,C,8]
-    q0_embs = self.ff_query(
-      q0_inputs.reshape(-1,8) # [B*C,8]
+    q0_inputs = self._extract_qubit_inputs(qubits[:,0], inputs, C) # [B,C,h]
+    q0_embs = self.ff_up_q(
+      q0_inputs.reshape(B*C,self.h) # [B*C,h]
     ).reshape(B,C,-1) # [B,C,H]
 
     double_q = (qubits[:,1] != -1)
     b = double_q.sum()
     q1_embs = torch.zeros_like(q0_embs)
     if b != 0:
-      q1_inputs = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,8]
-      q1_embs[double_q] = self.ff_key(
-        q1_inputs.reshape(-1,8) # [b*C,8]
+      q1_inputs = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,h]
+      q1_embs[double_q] = self.ff_up_q(
+        q1_inputs.reshape(-1,self.h) # [b*C,h]
       ).reshape(b,C,-1) # [b,C,H]
 
-    return key_embs, q0_embs, q1_embs
+    return key_embs, torch.cat([q0_embs.unsqueeze(2), q1_embs.unsqueeze(2)], dim=2)
   
   def _project(
     self,
     key_embs: torch.Tensor,
-    q0_embs: torch.Tensor,
-    q1_embs: torch.Tensor
+    q_embs: torch.Tensor,
   ) -> torch.Tensor:
     (B,C,Q,H) = key_embs.shape
-    projs_q0 = torch.bmm(key_embs.reshape(B*C,Q,H), q0_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
-    projs_q1 = torch.bmm(key_embs.reshape(B*C,Q,H), q1_embs.reshape(B*C,H,1)).reshape(B,C,Q) # [B,C,Q]
-    return (projs_q0 + projs_q1) / torch.sqrt(torch.tensor(H))
+    # Run transformer with all cores batched so that the qubits attend among each other
+    key_embs = self.key_transf(key_embs.reshape(B*C,Q,-1)) # [B*C,Q,H]
+    # Now run MHA to get a single per core embedding
+    embs, _ = self.mha(q_embs.reshape(B*C,2,H), key_embs, key_embs) # [B*C,2,H]
+    core_embs = embs.mean(dim=1).reshape(B,C,H) # [B,C,H]
+    core_embs = self.core_transf(core_embs)
+    core_logits = self.ff_down(core_embs.reshape(B*C,H)) # [B*C,1]
+    return core_logits.reshape(B,C)
 
 
   def forward(
@@ -278,9 +287,8 @@ class PredictionModel(torch.nn.Module):
     '''
     inputs = self._format_input(
       qubits, prev_core_allocs, current_core_allocs, core_capacities, core_connectivity, circuit_emb)
-    key_embs, q0_embs, q1_embs = self._get_embeddings(inputs, qubits)
-    projs = self._project(key_embs, q0_embs, q1_embs) # [B,C,Q]
-    logits = projs.sum(dim=-1) # [B,C]
+    key_embs, q_embs = self._get_embeddings(inputs, qubits)
+    logits = self._project(key_embs, q_embs) # [B,C]
     vals = torch.tensor([[0.4] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:

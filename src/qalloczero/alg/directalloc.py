@@ -56,7 +56,11 @@ class DirectAllocator:
     mode: Mode = Mode.Sequential,
   ):
     self.model_cfg = model_cfg
-    self.pred_model = PredictionModel(layers=model_cfg.layers)
+    self.pred_model = PredictionModel(
+      embed_size=model_cfg.embed_size,
+      num_heads=model_cfg.num_heads,
+      num_layers=model_cfg.num_layers,
+    )
     self.pred_model.to(device)
     self.mode = mode
   
@@ -68,7 +72,9 @@ class DirectAllocator:
 
   def _save_model_cfg(self, path: str):
     params = dict(
-      layers=self.model_cfg.layers,
+      embed_size=self.model_cfg.embed_size,
+      num_heads=self.model_cfg.num_heads,
+      num_layers=self.model_cfg.num_layers,
     )
     with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
@@ -103,7 +109,11 @@ class DirectAllocator:
       raise Exception(f"Provided load directory does not exist: {path}")
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
-    model_cfg = ModelConfigs(layers=params['layers'])
+    model_cfg = ModelConfigs(
+      embed_size=params['embed_size'],
+      num_heads=params['num_heads'],
+      num_layers=params['num_layers'],
+    )
     loaded = DirectAllocator(device=device, model_cfg=model_cfg)
     model_file = "pred_mod.pt"
     if checkpoint is not None:
