@@ -13,11 +13,11 @@ from russo.tests.hungarian import HQA
 
 
 def test_direct_alloc():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -44,7 +44,7 @@ def test_direct_alloc():
   )
 
   if test_run:
-    allocator = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel)
+    allocator = DirectAllocator.load("trained/da_v6", device="cpu").set_mode(DirectAllocator.Mode.Parallel)
     circuit = sampler.sample()
     circuit.alloc_slices
     torch.manual_seed(42)

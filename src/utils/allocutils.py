@@ -1,3 +1,4 @@
+import os
 import torch
 from copy import copy
 from typing import Tuple, List
@@ -136,3 +137,12 @@ def check_sanity_swap(allocations: torch.Tensor, swaps: List[List[Tuple[int,int]
       f"Target and result do not coincide after swapping for slices {slice_i} - {slice_i + 1}: "
       f"{qubit_cores.tolist()} vs target {next_slice.tolist()}"
     )
+
+
+def get_all_checkpoints(path) -> dict[int, str]:
+  chpt_file = {}
+  for f in os.listdir(path):
+    if os.path.isfile(os.path.join(path, f)) and f.startswith('checkpt') and f.endswith('.pt'):
+      i = int(f.split('_')[1])
+      chpt_file[i] = f
+  return chpt_file

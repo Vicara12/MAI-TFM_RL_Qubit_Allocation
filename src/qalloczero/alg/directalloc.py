@@ -8,7 +8,7 @@ from typing import Self, Tuple, Optional, Any
 from copy import deepcopy
 from dataclasses import dataclass, asdict
 from utils.customtypes import Circuit, Hardware
-from utils.allocutils import sol_cost
+from utils.allocutils import sol_cost, get_all_checkpoints
 from scipy.stats import ttest_ind
 from utils.timer import Timer
 from sampler.hardwaresampler import HardwareSampler
@@ -98,16 +98,22 @@ class DirectAllocator:
 
 
   @staticmethod
-  def load(path: str, device: str = "cuda") -> Self:
+  def load(path: str, device: str = "cuda", checkpoint: Optional[int] = None) -> Self:
     if not os.path.isdir(path):
       raise Exception(f"Provided load directory does not exist: {path}")
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
       params = json.load(f)
     model_cfg = ModelConfigs(layers=params['layers'])
     loaded = DirectAllocator(device=device, model_cfg=model_cfg)
+    model_file = "pred_mod.pt"
+    if checkpoint is not None:
+      chpt_files = get_all_checkpoints(path)
+      if checkpoint not in chpt_files.keys():
+        raise Exception(f'Checkpoint {checkpoint} not found: {", ".join(list(chpt_files.keys()))}')
+      model_file = chpt_files[checkpoint]
     loaded.pred_model.load_state_dict(
       torch.load(
-        os.path.join(path, "pred_mod.pt"),
+        os.path.join(path, model_file),
         weights_only=False,
         map_location=device,
       )
@@ -272,7 +278,7 @@ class DirectAllocator:
       
     dev_core_con = hardware.core_connectivity.to(self.device)
     step = 0
-    n_steps = sum(len(s[1])+len([2]) for s in alloc_slices)
+    n_steps = sum(len(s[1])+len(s[2]) for s in alloc_slices)
     
     for slice_idx, (_, free_qubits, paired_qubits) in enumerate(alloc_slices):
       prev_core_allocs = core_allocs
@@ -285,7 +291,7 @@ class DirectAllocator:
         if verbose:
           print((f"\033[2K\r - Optimization step {step+1}/{n_steps} ({int(100*(step+1)/n_steps)}%)"), end="")
           step += 1
-        _, _, log_pol = self.pred_model(
+        pol, _, log_pol = self.pred_model(
           qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
           prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
           current_core_allocs=core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
@@ -460,6 +466,7 @@ class DirectAllocator:
       val_cost = [],
       loss = [],
       noise = [],
+      vm=[],
       t = []
     )
     init_t = time()
@@ -519,6 +526,7 @@ class DirectAllocator:
         data_log['loss'].append(cost_loss)
         data_log['noise'].append(opt_cfg.noise)
         data_log['t'].append(time() - init_t)
+        data_log['vm'].append(vm_ratio)
         opt_cfg.noise = max(train_cfg.min_noise, opt_cfg.noise*train_cfg.noise_decrease_factor)
 
     except KeyboardInterrupt as e:
@@ -564,7 +572,7 @@ class DirectAllocator:
         cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
         all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
         action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
-        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves]) - torch.sum(log_probs[valid_moves])
         valid_moves_ratio += valid_moves.float().mean().item()
 
       all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)

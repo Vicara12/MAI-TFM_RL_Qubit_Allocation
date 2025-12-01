@@ -86,30 +86,25 @@ def architecture_shape_comparison():
   show_arch_comp_results('trained/shape')
 
 
-def train_model_da(architecture: list[int], name: str):
+def train_model_da(allocator, name: str):
   validation_hardware = Hardware(
     core_capacities=torch.tensor([4]*4),
     core_connectivity=(torch.ones(4,4) - torch.eye(4))
   )
-  allocator = DirectAllocator(
-    device='cuda',
-    model_cfg=ModelConfigs(layers=architecture),
-    mode=DirectAllocator.Mode.Parallel,
-  )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=2_000,
+    train_iters=1_000,
     batch_size=2,
-    group_size=16,
+    group_size=32,
     validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(64)],
     store_path=f"trained/{name}",
     initial_noise=0.20,
-    noise_decrease_factor=0.999,
-    min_noise=0.05,
+    noise_decrease_factor=0.9975,
+    min_noise=0.0,
     circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16)),
-    lr=2.5e-5,
+    lr=4e-5,
     inv_mov_penalization=0.3,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
   )
@@ -129,28 +124,28 @@ def optimize(allocator, hardware, circuit, cfg: Optional[TSConfig] = None):
   print(f" + t={Timer.get('t').time:.2f}s cost={result[1]} norm_cost={norm_cost} swaps={norm_swaps}")
 
 
-def train_azero(azero: AlphaZero, save_name: str):
-  save_dir = f"trained/{save_name}"
+def train_azero(azero: AlphaZero, name: str):
+  save_dir = f"trained/{name}"
   cfg = TSConfig(
     target_tree_size=512,
     noise=1,
-    dirichlet_alpha=0.25,
+    dirichlet_alpha=1.0,
     discount_factor=0.0,
-    action_sel_temp=0,
-    ucb_c1=0.2,
+    action_sel_temp=1,
+    ucb_c1=0.125,
     ucb_c2=500,
   )
   # num_lq is not important as it will be derived from sampled hardware
   circuit_sampler = RandomCircuit(num_lq=4, num_slices=16)
-  hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
+  hardware_sampler = HardwareSampler(max_nqubits=24, range_ncores=[4,8])
   train_cfg = AlphaZero.TrainConfig(
-    train_iters=1_500,
+    train_iters=1_000,
     batch_size=16,
     n_data_augs=1,
     circ_sampler=circuit_sampler,
     hardware_sampler=hardware_sampler,
     noise_decrease_factor=0.975,
-    lr=5e-5,
+    lr=5e-3,
     ts_cfg=cfg,
   )
   try:
@@ -211,7 +206,15 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  train_model_da(architecture=[16,32], name="da")
+  allocator = DirectAllocator(device='cuda', model_cfg=ModelConfigs(layers=[16,32,64,128]), mode=DirectAllocator.Mode.Sequential)
+  train_model_da(allocator, name="da")
+
+  ''' Refine a direct allocator model '''
+  # allocator = DirectAllocator.load('trained/da_v6')
+  # train_model_da(allocator, name="da_v6_ft")
+
+  ''' Train the base models with qalloczero '''
+  # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")
 
   ''' Benchmark with real circuits using Direct Allocation '''
   # benchmark_da("trained/da_v3")

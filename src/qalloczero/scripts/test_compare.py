@@ -2,7 +2,7 @@ import torch
 from utils.timer import Timer
 from utils.customtypes import Hardware, Circuit
 from sampler.randomcircuit import RandomCircuit
-from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap
+from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.directalloc import DirectAllocator
@@ -20,12 +20,12 @@ def validate():
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=False),
-    # da_seq_v  = DirectAllocator.load("trained/da",    device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    da_seq_v  = DirectAllocator.load("trained/da_v7",    device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
-    da_seq_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    # da_seq_v5 = DirectAllocator.load("trained/da_v6", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
 
-    # da_par_v  = DirectAllocator.load("trained/da"   , device="cpu").set_mode(DirectAllocator.Mode.Parallel),
+    da_par_v  = DirectAllocator.load("trained/da_v7"   , device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
@@ -33,9 +33,10 @@ def validate():
     # az_v  = AlphaZero.load("trained/da",    device="cpu"),
     # az_v2 = AlphaZero.load("trained/da_v2", device="cpu"),
     # az_v4 = AlphaZero.load("trained/da_v4", device="cpu"),
-    az_v5 = AlphaZero.load("trained/da_v5", device="cpu"),
-    # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
-    # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
+
+    # da_sequential = DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Sequential),
+    # da_parallel   = DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Parallel),
+
   )
   cfg = TSConfig(
     target_tree_size=512,
@@ -90,11 +91,19 @@ def benchmark():
     core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
   )
 
+  # path = "trained/da_v6"
+  # checks = sorted(list(get_all_checkpoints(path).keys()))[::4]
+
+  # alogs_seq = {f"da_seq_{i}": DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=i).set_mode(DirectAllocator.Mode.Sequential) for i in checks}
+  # alogs_par = {f"da_seq_{i}": DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=i).set_mode(DirectAllocator.Mode.Parallel) for i in checks}
+
+  # algos = alogs_par
+
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_sequential = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
-    # azero =               AlphaZero.load("trained/da_v2", device="cpu"),
+    da_sequential = DirectAllocator.load("trained/da_v9", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v9", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Parallel),
+    # azero =               AlphaZero.load("trained/az", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
   )

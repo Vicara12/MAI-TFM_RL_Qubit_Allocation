@@ -15,7 +15,7 @@ from qalloczero.models.predmodel import PredictionModel
 from qalloczero.alg.ts import TSConfig, TSTrainData, ModelConfigs
 from qalloczero.alg.ts_python import TSPythonEngine
 from qalloczero.alg.ts_cpp import TSCppEngine
-from utils.allocutils import sol_cost
+from utils.allocutils import sol_cost, get_all_checkpoints
 from utils.timer import Timer
 
 
@@ -82,7 +82,7 @@ class AlphaZero:
 
 
   @staticmethod
-  def load(path: str, device: str = "cpu") -> Self:
+  def load(path: str, device: str = "cpu", checkpoint: Optional[int] = None) -> Self:
     if not os.path.isdir(path):
       raise Exception(f"Provided load directory does not exist: {path}")
     with open(os.path.join(path, "optimizer_conf.json"), "r") as f:
@@ -93,9 +93,15 @@ class AlphaZero:
     model_cfg = ModelConfigs(layers=params['layers'])
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
     loaded = AlphaZero(device=device, backend=backend, model_cfg=model_cfg)
+    model_file = "pred_mod.pt"
+    if checkpoint is not None:
+      chpt_files = get_all_checkpoints(path)
+      if checkpoint not in chpt_files.keys():
+        raise Exception(f'Checkpoint {checkpoint} not found: {", ".join(list(chpt_files.keys()))}')
+      model_file = chpt_files[checkpoint]
     loaded.pred_model.load_state_dict(
       torch.load(
-        os.path.join(path, "pred_mod.pt"),
+        os.path.join(path, model_file),
         weights_only=False,
         map_location=device,
       )
@@ -226,7 +232,7 @@ class AlphaZero:
         print(f"[*] Train iter {iter+1}/{train_cfg.train_iters}")
         self.pred_model.eval()
         self.pred_model.to(self.device)
-        circuits = [train_cfg.circ_sampler.sample() for _ in range(train_cfg.batch_size)]
+        circuits = [train_cfg.circ_sampler.sample()]*train_cfg.batch_size
         costs = []
         avg_expl_r = 0
         train_data = []
@@ -236,19 +242,21 @@ class AlphaZero:
           costs.append(cost)
           avg_expl_r += er
           train_data.append(tdata)
+        costs = torch.tensor(costs)
         print((
-          f" + Obtained train data: t={self.timer.time:.2f} ac={sum(costs)/len(costs):.3f} "
+          f" + Obtained train data: t={self.timer.time:.2f} ac={costs.mean().item():.3f} ({costs.std(unbiased=True).item():.2f})"
           f" er={avg_expl_r/train_cfg.batch_size:.3f} (noise={train_cfg.ts_cfg.noise:.3f})"
         ))
+        costs = (costs - costs.mean()) / (costs.std(unbiased=True) + 1e-8)
         
         avg_loss = 0
         core_cons = hardware.core_connectivity.to(train_device)
+        circ_emb = circuits[0].embedding.to(train_device)
         with self.timer:
           self.pred_model.train()
           self.pred_model.output_logits(True)
           self.pred_model.to(train_device)
           for batch, tdata in enumerate(train_data):
-            circ_emb = circuits[batch].embedding.to(train_device)
             qubits, prev_allocs, curr_allocs, core_caps, slice_idx, ref_logits, _ = self._move_train_data(tdata, train_device)
             pols, _, _ = self.pred_model(
               qubits=qubits,
@@ -259,7 +267,7 @@ class AlphaZero:
               circuit_emb=circ_emb[slice_idx],
             )
             # weight = 1 if costs[batch] == 0 else 1/costs[batch] # Protection against Nans
-            loss = prob_loss(pols, ref_logits)
+            loss = costs[batch]*prob_loss(pols, ref_logits)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)

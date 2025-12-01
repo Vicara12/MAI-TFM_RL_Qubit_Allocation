@@ -145,11 +145,11 @@ def test_cpp_engine():
 
 
 def test_alphazero():
-  # test_run = True
-  # test_train = False
+  test_run = True
+  test_train = False
 
-  test_run = False
-  test_train = True
+  # test_run = False
+  # test_train = True
 
   test_parallel = False
 
@@ -164,7 +164,7 @@ def test_alphazero():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   hardware_sampler = HardwareSampler(max_nqubits=32, range_ncores=[2,8])
-  azero = AlphaZero.load("trained/da_v5", device="cpu")
+  azero = AlphaZero.load("trained/da_v6", device="cpu")
   # azero = AlphaZero(
   #   device='cpu',
   #   backend=AlphaZero.Backend.Cpp,
@@ -182,7 +182,7 @@ def test_alphazero():
 
   if test_run:
     cfg = TSConfig(
-      target_tree_size=512,
+      target_tree_size=2048,
       noise=0.2,
       dirichlet_alpha=1.0,
       discount_factor=0.0,

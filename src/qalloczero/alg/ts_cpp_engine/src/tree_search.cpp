@@ -169,8 +169,10 @@ auto TreeSearch::optimize(
     }
   }
 
-  if (verbose)
+  if (verbose) {
     std::cout << "\033[2K\r";
+    std::cout.flush();
+  }
 
   if (ret_train_data) {
     // Compute total remaining cost for each step and normalize
@@ -283,16 +285,14 @@ auto TreeSearch::select_action(
   }
 
   float total_visits = visit_counts.sum().item<float>();
-  if (total_visits > 0.0f) {
-      visit_counts = visit_counts / total_visits;
-  }
+  assert(total_visits > 1e-5);
+  visit_counts = visit_counts / total_visits;
 
   int action = 0;
   if (temp == 0.0f) {
-      action = visit_counts.argmax().item<int>();
+    action = visit_counts.argmax().item<int>();
   } else {
-      torch::Tensor probs = torch::softmax(visit_counts / temp, /*dim=*/-1);
-      action = torch::multinomial(probs, /*num_samples=*/1).item<int>();
+    action = torch::multinomial(visit_counts, /*num_samples=*/1).item<int>();
   }
 
   return {action, visit_counts};
