@@ -126,7 +126,7 @@ class AlphaZero:
       n_qubits=circuit.n_qubits,
       core_caps=hardware.core_capacities,
       core_conns=hardware.core_connectivity,
-      circuit_embs=circuit.embedding,
+      circuit_embs=circuit.new_embedding,
       alloc_steps=circuit.alloc_steps,
       cfg=ts_cfg,
       ret_train_data=False,
@@ -156,7 +156,7 @@ class AlphaZero:
           n_qubits=circuits[i].n_qubits,
           core_caps=hardware.core_capacities,
           core_conns=hardware.core_connectivity,
-          circuit_embs=circuits[i].embedding,
+          circuit_embs=circuits[i].new_embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=False,
@@ -188,7 +188,7 @@ class AlphaZero:
           n_qubits=circuits[i].n_qubits,
           core_caps=hardware.core_capacities,
           core_conns=hardware.core_connectivity,
-          circuit_embs=circuits[i].embedding,
+          circuit_embs=circuits[i].new_embedding,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=True,
@@ -251,7 +251,7 @@ class AlphaZero:
         
         avg_loss = 0
         core_cons = hardware.core_connectivity.to(train_device)
-        circ_emb = circuits[0].embedding.to(train_device)
+        circ_emb = circuits[0].new_embedding.to(train_device)
         with self.timer:
           self.pred_model.train()
           self.pred_model.output_logits(True)

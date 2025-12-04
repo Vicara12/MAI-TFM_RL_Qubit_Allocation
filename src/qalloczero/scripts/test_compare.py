@@ -11,16 +11,16 @@ from russo.tests.hungarian import HQA
 
 def validate():
   torch.manual_seed(42)
-  n_qubits = 100
+  n_qubits = 16
   n_slices = 32
   n_circuits = 16
-  core_caps = torch.tensor([10]*10, dtype=torch.int)
+  core_caps = torch.tensor([4]*4, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    hqa = HQA(lookahead=True, verbose=True),
-    da_seq  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Sequential),
+    # hqa = HQA(lookahead=True, verbose=True),
+    da_seq  = DirectAllocator.load("trained/da_v10",    device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_par  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Parallel),
     
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
@@ -64,6 +64,8 @@ def validate():
       else:
         raise Exception("Unrecognized algorithm type")
     norm_res = torch.tensor([res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)])
+    for (res, circuit) in zip(results, circuits):
+      check_sanity(allocs=res[0], circuit=circuit, hardware=hardware)
     norm_swaps = [
       count_swaps(swaps_from_alloc(res[0], n_cores))/circ.n_gates_norm for (res, circ) in zip(results,circuits)
     ]

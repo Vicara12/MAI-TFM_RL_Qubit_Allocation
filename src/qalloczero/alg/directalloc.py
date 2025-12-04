@@ -379,7 +379,7 @@ class DirectAllocator:
     if self.mode == DirectAllocator.Mode.Sequential:
       return self._allocate_sequential(
         allocations=allocations,
-        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        circ_embs=circuit.new_embedding.to(self.device).unsqueeze(0),
         alloc_steps=circuit.alloc_steps,
         cfg=cfg,
         hardware=hardware,
@@ -389,7 +389,7 @@ class DirectAllocator:
     else:
       return self._allocate_parallel(
         allocations=allocations,
-        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        circ_embs=circuit.new_embedding.to(self.device).unsqueeze(0),
         alloc_slices=circuit.alloc_slices,
         cfg=cfg,
         hardware=hardware,
