@@ -93,18 +93,18 @@ def train_model_da(allocator, name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=1_000,
-    batch_size=2,
+    train_iters=2_000,
+    batch_size=1,
     group_size=32,
     validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f"trained/{name}",
-    initial_noise=0.20,
+    initial_noise=0.2,
     noise_decrease_factor=0.9975,
     min_noise=0.0,
-    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16)),
-    lr=4e-5,
+    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16), reflow=True),
+    lr=5e-5,
     inv_mov_penalization=0.3,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
   )
@@ -206,16 +206,16 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  allocator = DirectAllocator(
-    device='cpu',
-    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=4),
-    mode=DirectAllocator.Mode.Sequential,
-  )
-  train_model_da(allocator, name="da")
+  # allocator = DirectAllocator(
+  #   device='cuda',
+  #   model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+  #   mode=DirectAllocator.Mode.Sequential,
+  # )
+  # train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
-  # allocator = DirectAllocator.load('trained/da_v6')
-  # train_model_da(allocator, name="da_v6_ft")
+  allocator = DirectAllocator.load('trained/da_v10')
+  train_model_da(allocator, name="da_v10_ft")
 
   ''' Train the base models with qalloczero '''
   # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")

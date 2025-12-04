@@ -250,7 +250,7 @@ class DirectAllocator:
         allocations[slice_idx,qubit1] = action
         core_allocs[qubit1] = action
       if ret_train_data:
-        all_probs.append(log_pol)
+        all_probs.append(log_pol[action])
         all_valid.append(valid)
       if cfg.mask_invalid:
         core_caps[action] = core_caps[action] - n_qubits
@@ -475,6 +475,8 @@ class DirectAllocator:
       ),
       val_cost = [],
       loss = [],
+      cost_loss = [],
+      val_loss = [],
       noise = [],
       vm=[],
       t = []
@@ -533,7 +535,9 @@ class DirectAllocator:
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
         ))
         
-        data_log['loss'].append(cost_loss)
+        data_log['loss'].append(loss)
+        data_log['cost_loss'].append(cost_loss)
+        data_log['val_loss'].append(val_loss)
         data_log['noise'].append(opt_cfg.noise)
         data_log['t'].append(time() - init_t)
         data_log['vm'].append(vm_ratio)
@@ -582,7 +586,7 @@ class DirectAllocator:
         cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
         all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
         action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
-        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves]) - torch.sum(log_probs[valid_moves])
+        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
         valid_moves_ratio += valid_moves.float().mean().item()
 
       all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)

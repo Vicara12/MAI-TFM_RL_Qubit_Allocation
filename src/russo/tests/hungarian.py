@@ -2,6 +2,7 @@ from scipy.optimize import linear_sum_assignment
 from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost, check_sanity
 import numpy as np
+from typing import Optional
 import torch
 
 
@@ -162,7 +163,7 @@ class HQA:
     self.lookahead = lookahead
     self.verbose = verbose
 
-  def optimize(self, circuit: Circuit, hardware: Hardware):
+  def optimize(self, circuit: Circuit, hardware: Hardware, verbose: Optional[bool] = None):
     allocations = hungarian_assignement(
       slices=circuit.slice_gates,
       num_qubits=circuit.n_qubits,
@@ -170,7 +171,7 @@ class HQA:
       capacity=hardware.core_capacities.numpy(),
       lookahead=self.lookahead,
       distance_matrix=hardware.core_connectivity.numpy(),
-      verbose=self.verbose
+      verbose=verbose if verbose is not None else self.verbose
     )
     allocations = torch.tensor([s.tolist() for s in allocations], dtype=torch.int)
     check_sanity(allocs=allocations, circuit=circuit, hardware=hardware)

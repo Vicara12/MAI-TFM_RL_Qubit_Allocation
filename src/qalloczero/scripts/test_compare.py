@@ -11,21 +11,23 @@ from russo.tests.hungarian import HQA
 
 def validate():
   torch.manual_seed(42)
-  n_qubits = 16
+  n_qubits = 100
   n_slices = 32
   n_circuits = 16
-  core_caps = torch.tensor([4]*4, dtype=torch.int)
+  core_caps = torch.tensor([10]*10, dtype=torch.int)
   n_cores = core_caps.shape[0]
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    # hqa = HQA(lookahead=True, verbose=False),
-    da_seq_v  = DirectAllocator.load("trained/da_v7",    device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Sequential),
+    hqa = HQA(lookahead=True, verbose=True),
+    da_seq  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Sequential),
+    # da_par  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Parallel),
+    
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v5 = DirectAllocator.load("trained/da_v6", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
 
-    da_par_v  = DirectAllocator.load("trained/da_v7"   , device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Parallel),
+    # da_par_v  = DirectAllocator.load("trained/da_v7"   , device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
     # da_par_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
@@ -56,9 +58,9 @@ def validate():
       if isinstance(algo, DirectAllocator) or isinstance(algo, HQA):
         results = []
         for circ in circuits:
-          results.append(algo.optimize(circ, hardware=hardware))
+          results.append(algo.optimize(circ, hardware=hardware, verbose=True))
       elif isinstance(algo, AlphaZero):
-        results = algo.optimize_mult(circuits, cfg, hardware=hardware)
+        results = algo.optimize_mult(circuits, cfg, hardware=hardware, verbose=True)
       else:
         raise Exception("Unrecognized algorithm type")
     norm_res = torch.tensor([res[1]/circ.n_gates_norm for (res, circ) in zip(results,circuits)])
@@ -101,8 +103,8 @@ def benchmark():
 
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_sequential = DirectAllocator.load("trained/da_v9", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v9", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Parallel),
+    da_sequential = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/az", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),

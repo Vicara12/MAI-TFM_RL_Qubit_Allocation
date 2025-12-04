@@ -85,7 +85,9 @@ def testing_pred_model():
   vals_single = torch.vstack(vals_single)
 
   print(torch.equal(probs_batched, probs_single))
+  print(torch.abs(probs_batched - probs_single).amax().item())
   print(torch.equal(vals_batched, vals_single))
+  print(torch.abs(vals_batched - vals_single).amax().item())
   pass
 
 

@@ -32,17 +32,19 @@ class PredictionModel(torch.nn.Module):
     super().__init__()
     self.h = 8 # Size of the feature space (number of features)
     self.ff_up = torch.nn.Linear(self.h, embed_size)
-    self.ff_up_q = torch.nn.Linear(self.h, embed_size)
+    self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
     self.ff_down = torch.nn.Linear(embed_size, 1)
     encoder_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,
       nhead=num_heads,
+      dim_feedforward=embed_size,
       batch_first=True
     )
     self.key_transf = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
     core_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,
       nhead=num_heads,
+      dim_feedforward=embed_size,
       batch_first=True
     )
     self.core_transf = torch.nn.TransformerEncoder(core_layer, num_layers=num_layers)
@@ -218,20 +220,18 @@ class PredictionModel(torch.nn.Module):
     ).reshape(B,C,Q,-1) # [B,C,Q,H]
 
     q0_inputs = self._extract_qubit_inputs(qubits[:,0], inputs, C) # [B,C,h]
-    q0_embs = self.ff_up_q(
-      q0_inputs.reshape(B*C,self.h) # [B*C,h]
-    ).reshape(B,C,-1) # [B,C,H]
 
     double_q = (qubits[:,1] != -1)
     b = double_q.sum()
-    q1_embs = torch.zeros_like(q0_embs)
+    q1_inputs = torch.zeros_like(q0_inputs)
     if b != 0:
-      q1_inputs = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,h]
-      q1_embs[double_q] = self.ff_up_q(
-        q1_inputs.reshape(-1,self.h) # [b*C,h]
-      ).reshape(b,C,-1) # [b,C,H]
+      q1_inputs[double_q] = self._extract_qubit_inputs(qubits[double_q,1], inputs[double_q], C) # [b,C,h]
+    q_inputs = torch.cat([q0_inputs, q1_inputs], dim=-1)
+    q_embs = self.ff_up_q(
+      q_inputs.reshape(B*C,2*self.h) # [b*C,h]
+    ).reshape(B,C,-1) # [b,C,H]
 
-    return key_embs, torch.cat([q0_embs.unsqueeze(2), q1_embs.unsqueeze(2)], dim=2)
+    return key_embs, q_embs
   
   def _project(
     self,
@@ -242,10 +242,9 @@ class PredictionModel(torch.nn.Module):
     # Run transformer with all cores batched so that the qubits attend among each other
     key_embs = self.key_transf(key_embs.reshape(B*C,Q,-1)) # [B*C,Q,H]
     # Now run MHA to get a single per core embedding
-    embs, _ = self.mha(q_embs.reshape(B*C,2,H), key_embs, key_embs) # [B*C,2,H]
-    core_embs = embs.mean(dim=1).reshape(B,C,H) # [B,C,H]
-    core_embs = self.core_transf(core_embs)
-    core_logits = self.ff_down(core_embs.reshape(B*C,H)) # [B*C,1]
+    core_embs, _ = self.mha(q_embs.reshape(B*C,1,H), key_embs, key_embs) # [B*C,2,H]
+    core_embs = self.core_transf(core_embs.reshape(B,C,H)) # [B,C,H]
+    core_logits = self.ff_down(core_embs.reshape(B*C,H))   # [B*C,1]
     return core_logits.reshape(B,C)
 
 
