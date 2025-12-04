@@ -20,7 +20,7 @@ def validate():
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_seq  = DirectAllocator.load("trained/da_v10",    device="cpu").set_mode(DirectAllocator.Mode.Sequential),
+    da_seq  = DirectAllocator.load("trained/da_v11",    device="cpu", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
     # da_par  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Parallel),
     
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
@@ -49,9 +49,8 @@ def validate():
     ucb_c1=0.125,
     ucb_c2=500,
   )
-  sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
+  sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices, reflow=False)
   circuits = [sampler.sample() for _ in range(n_circuits)]
-
   for (name, algo) in algos.items():
     print(f"[*] Optimizing {name}")
     with Timer.get('t'):
@@ -105,8 +104,8 @@ def benchmark():
 
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_sequential = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
+    da_sequential = DirectAllocator.load("trained/da_v10_ft", device="cpu", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    # da_parallel   = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/az", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),

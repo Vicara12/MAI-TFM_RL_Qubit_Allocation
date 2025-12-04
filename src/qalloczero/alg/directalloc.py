@@ -118,7 +118,9 @@ class DirectAllocator:
     model_file = "pred_mod.pt"
     if checkpoint is not None:
       chpt_files = get_all_checkpoints(path)
-      if checkpoint not in chpt_files.keys():
+      if checkpoint == -1:
+        checkpoint = max(list(chpt_files.keys()))
+      elif checkpoint not in chpt_files.keys():
         raise Exception(f'Checkpoint {checkpoint} not found: {", ".join(list(chpt_files.keys()))}')
       model_file = chpt_files[checkpoint]
     loaded.pred_model.load_state_dict(
@@ -455,7 +457,7 @@ class DirectAllocator:
     optimizer = torch.optim.Adam(self.pred_model.parameters(), lr=train_cfg.lr)
     opt_cfg = DAConfig(
       noise=train_cfg.initial_noise,
-      mask_invalid=False,
+      mask_invalid=True,
       greedy=False,
     )
     data_log = dict(

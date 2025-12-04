@@ -18,7 +18,7 @@ from qalloczero.scripts.test_compare import (
 
 if __name__ == "__main__":
   # testing_circuit_enc()
-  testing_pred_model()
+  # testing_pred_model()
   # test_cpp_engine()
   # grid_search()
   # test_alphazero()
@@ -26,3 +26,5 @@ if __name__ == "__main__":
   # test_direct_alloc()
   # validate()
   # benchmark()
+  validate()
+  benchmark()

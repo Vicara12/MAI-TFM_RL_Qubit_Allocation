@@ -14,7 +14,7 @@ class RandomCircuit(CircuitSampler):
         set to a callable object then the number of slices each time sample() is called is determined
         by the returned value (i.e. lambda: randint(1,10)).
   '''
-  def __init__(self, num_lq: int, num_slices: Union[int, Callable[[], int]], reflow: bool = False):
+  def __init__(self, num_lq: int, num_slices: Union[int, Callable[[], int]], reflow: Union[bool,float] = False):
     super().__init__(num_lq)
     self.num_slices = num_slices
     self.reflow = reflow
@@ -33,7 +33,7 @@ class RandomCircuit(CircuitSampler):
         used_qubits.add(b)
         a,b = random.sample(range(0,self.num_lq_),2)
       circuit_slice_gates.append(tuple(slice_gates))
-    if self.reflow and bool(random.randint(0,1)):
+    if (self.reflow if isinstance(self.reflow, bool) else (random.randint(0,100) < 100*self.reflow)):
       gate_list = sum(circuit_slice_gates, tuple())
       return Circuit.from_gate_list(gates=gate_list, n_qubits=self.num_lq)
     return Circuit(slice_gates=tuple(circuit_slice_gates), n_qubits=self.num_lq)
