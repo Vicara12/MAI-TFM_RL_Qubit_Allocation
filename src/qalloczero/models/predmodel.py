@@ -54,6 +54,14 @@ class PredictionModel(torch.nn.Module):
       batch_first=True
     )
     self.output_logits_ = False
+  
+
+  def show_params(self):
+    total_params = sum(p.numel() for p in self.parameters())
+    total_train_par = sum(p.numel() for p in self.parameters() if p.requires_grad)
+    print(f"* {total_params} params, {total_train_par} trainable ({100*total_train_par/total_params}%)")
+    for name, param in self.named_parameters():
+      print(f"Name: {name}{' (trainable)' if param.requires_grad else ''}, Shape: {param.shape}, {param.numel()} elements.")
 
 
   def output_logits(self, value: bool):

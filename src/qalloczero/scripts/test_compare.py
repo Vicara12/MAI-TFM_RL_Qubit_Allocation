@@ -2,6 +2,7 @@ import torch
 from utils.timer import Timer
 from utils.customtypes import Hardware, Circuit
 from sampler.randomcircuit import RandomCircuit
+from utils.plotter import drawCircuit
 from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
 from qalloczero.alg.ts import TSConfig
 from qalloczero.alg.alphazero import AlphaZero
@@ -93,6 +94,10 @@ def benchmark():
     core_capacities=torch.tensor([10]*10),
     core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
   )
+
+  for (name, circ) in circuits.items():
+    drawCircuit(circ.slice_gates[:30], circ.n_qubits, name, save_name=f'{name}.svg')
+  return
 
   # path = "trained/da_v6"
   # checks = sorted(list(get_all_checkpoints(path).keys()))[::4]

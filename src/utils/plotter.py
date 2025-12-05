@@ -12,6 +12,7 @@ from utils.allocutils import core_allocs_to_qubit_allocs
 def drawCircuit(circuit_slice_gates: Tuple[Tuple[Tuple[int, int], ...], ...],
                 num_lq, title="",
                 figsize_scale: float=1.0,
+                save_name: Optional[str] = None,
                 show: bool=True):
   ''' Draw the quantum circuit with the time slices.
 
@@ -41,6 +42,8 @@ def drawCircuit(circuit_slice_gates: Tuple[Tuple[Tuple[int, int], ...], ...],
   plt.tight_layout()
   if show:
     plt.show()
+  if title is not None:
+    plt.savefig(save_name, format=save_name.split('.')[-1])
 
 
 def drawQubitAllocation(

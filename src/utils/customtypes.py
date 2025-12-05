@@ -104,12 +104,6 @@ class Circuit:
     if not hasattr(self, 'embedding_'):
       self.embedding_ = self._get_embedding()
     return self.embedding_
-  
-  @property
-  def new_embedding(self) -> torch.Tensor:
-    if not hasattr(self, 'new_embedding_'):
-      self.new_embedding_ = self._get_new_embedding()
-    return self.new_embedding_
 
 
   def _get_alloc_slices(self) -> list[tuple[int, list[int], list[tuple[int,int]]]]:
@@ -137,15 +131,6 @@ class Circuit:
       embeddings[slice_i] = 0.5 * (embeddings[slice_i + 1] + adj[slice_i])
     return embeddings
   
-  def _get_new_embedding(self) -> torch.Tensor:
-    adj = self.adj_matrices
-    embeddings = torch.empty_like(adj, dtype=torch.float)
-    embeddings[-1] = 0.5 * adj[-1]
-    for slice_i in range(self.n_slices-2,-1,-1):
-      # Rows with a qubit that belongs to a gate get a weight of 0.5, otherwise 1
-      weights = torch.where((adj[slice_i] == 0).all(dim=-1), torch.tensor(1.0), torch.tensor(0.5))
-      embeddings[slice_i] = weights.unsqueeze(-1) * embeddings[slice_i + 1] + 0.5 * adj[slice_i]
-    return embeddings
 
   def _get_alloc_order(self, order=True) -> torch.Tensor:
     ''' Get the allocation order of te qubits for a given circuit.

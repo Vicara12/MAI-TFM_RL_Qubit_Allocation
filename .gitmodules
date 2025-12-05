@@ -1,0 +1,3 @@
+[submodule "submodules/russo"]
+	path = submodules/russo
+	url = git@github.com:jlopezclosa/QubitAllocation-Russo.git

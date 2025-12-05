@@ -57,7 +57,7 @@ def testing_pred_model():
   ])
   slice_gates = (((0,1),),((0,3),),((0,1),(2,3)))
   circ = Circuit(slice_gates=slice_gates, n_qubits=4)
-  circuit_emb = circ.new_embedding
+  circuit_emb = circ.embedding
   
   probs_batched, vals_batched, _ = pred_model(
     qubits=qubits,
