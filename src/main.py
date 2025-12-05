@@ -106,6 +106,7 @@ def train_model_da(allocator, name: str):
     circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16), reflow=0.5),
     lr=5e-5,
     inv_mov_penalization=0.3,
+    mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
   )
   allocator.train(train_cfg)

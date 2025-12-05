@@ -47,6 +47,7 @@ class DirectAllocator:
     lr: float
     inv_mov_penalization: float
     hardware_sampler: HardwareSampler
+    mask_invalid: bool
 
 
   def __init__(
@@ -457,7 +458,7 @@ class DirectAllocator:
     optimizer = torch.optim.Adam(self.pred_model.parameters(), lr=train_cfg.lr)
     opt_cfg = DAConfig(
       noise=train_cfg.initial_noise,
-      mask_invalid=True,
+      mask_invalid=train_cfg.mask_invalid,
       greedy=False,
     )
     data_log = dict(
@@ -474,6 +475,7 @@ class DirectAllocator:
         hws_nqubits=train_cfg.hardware_sampler.max_nqubits,
         hws_range_ncores=train_cfg.hardware_sampler.range_ncores,
         min_noise=train_cfg.min_noise,
+        mask_invalid=train_cfg.mask_invalid,
       ),
       val_cost = [],
       loss = [],
