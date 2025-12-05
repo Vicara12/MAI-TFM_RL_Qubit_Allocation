@@ -26,5 +26,5 @@ if __name__ == "__main__":
   # test_direct_alloc()
   # validate()
   # benchmark()
-  validate()
+  # validate()
   benchmark()

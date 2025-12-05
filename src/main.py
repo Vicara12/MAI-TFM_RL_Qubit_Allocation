@@ -4,7 +4,8 @@ import torch
 from typing import Optional
 from random import randint
 from sampler.hardwaresampler import HardwareSampler
-from sampler.randomcircuit import RandomCircuit
+from sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCircuit
+from sampler.mixedcircuitsampler import MixedCircuitSampler
 from qalloczero.alg.directalloc import DirectAllocator
 from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.ts import ModelConfigs, TSConfig
@@ -103,7 +104,11 @@ def train_model_da(allocator, name: str):
     initial_noise=0.2,
     noise_decrease_factor=0.9975,
     min_noise=0.0,
-    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16), reflow=0.5),
+    circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
+      (0.5, RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16), reflow=0.5)),
+      (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+      (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16)))
+    ]),
     lr=5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,

@@ -1,5 +1,4 @@
 import random
-import torch
 from typing import Union, Callable
 from sampler.circuitsampler import CircuitSampler
 from utils.customtypes import Circuit
@@ -44,4 +43,64 @@ class RandomCircuit(CircuitSampler):
       ns = str(self.num_slices())
     else:
       ns = str(self.num_slices)
-    return f"RandomCircuit(num_lq={self.num_lq}, num_slices={ns})"
+    return f"RandomCircuit(num_lq={self.num_lq}, num_slices={ns}, reflow={self.reflow})"
+
+
+
+class HotRandomCircuit(CircuitSampler):
+  '''
+  Random circuit in which one random qubit interacts very intensely.
+  '''
+  def __init__(self, num_lq: int, num_slices: Union[int, Callable[[], int]]):
+    super().__init__(num_lq)
+    self.num_slices = num_slices
+  
+  def _get_ab(self, a):
+    b = random.randint(0,self.num_lq_-1)
+    while b == a:
+      b = random.randint(0,self.num_lq_-1)
+    return random.choice([(a,b), (b,a)])
+
+  def sample(self) -> Circuit:
+    int_num_slices = self.num_slices() if callable(self.num_slices) else self.num_slices
+    a = random.randint(0,self.num_lq_-1)
+    circuit_slice_gates = [(self._get_ab(a),) for _ in range(int_num_slices)]
+    return Circuit(slice_gates=tuple(circuit_slice_gates), n_qubits=self.num_lq)
+  
+
+  def __str__(self):
+    if self.num_slices is Callable:
+      ns = str(self.num_slices())
+    else:
+      ns = str(self.num_slices)
+    return f"HotRandomCircuit(num_lq={self.num_lq}, num_slices={ns})"
+
+
+
+class DenseRandomCircuit(CircuitSampler):
+  ''' Random Circuits with many gates per slice.
+  '''
+  def __init__(self, num_lq: int, num_slices: Union[int, Callable[[], int]]):
+    super().__init__(num_lq)
+    self.num_slices = num_slices
+  
+
+  def sample(self) -> Circuit:
+    int_num_slices = self.num_slices() if callable(self.num_slices) else self.num_slices
+    gate_list = []
+    a,b = random.sample(range(0,self.num_lq_),2)
+    for t in range(int_num_slices):
+      qubits = list(range(2*(self.num_lq//2)))
+      random.shuffle(qubits)
+      gates = list(zip(qubits[::2],qubits[1::2]))
+      gate_list += gates
+    # Reflow
+    return Circuit.from_gate_list(gates=gate_list, n_qubits=self.num_lq)
+  
+
+  def __str__(self):
+    if self.num_slices is Callable:
+      ns = str(self.num_slices())
+    else:
+      ns = str(self.num_slices)
+    return f"SparseRandomCircuit(num_lq={self.num_lq}, num_slices={ns})"

@@ -95,9 +95,9 @@ def benchmark():
     core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
   )
 
-  for (name, circ) in circuits.items():
-    drawCircuit(circ.slice_gates[:30], circ.n_qubits, name, save_name=f'{name}.svg')
-  return
+  # for (name, circ) in circuits.items():
+  #   drawCircuit(circ.slice_gates[:60], circ.n_qubits, name, save_name=f'{name}.svg')
+  # return
 
   # path = "trained/da_v6"
   # checks = sorted(list(get_all_checkpoints(path).keys()))[::4]
