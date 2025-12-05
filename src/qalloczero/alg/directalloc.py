@@ -486,7 +486,7 @@ class DirectAllocator:
       t = []
     )
     init_t = time()
-    if self.device == "cuda":
+    if self.device.type == "cuda":
       torch.backends.cudnn.benchmark = True
     best_model = dict(val_cost=None, vc_mean=None, model_state=None, opt_state=None, noise=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
@@ -567,14 +567,14 @@ class DirectAllocator:
     self.pred_model.train()
     n_total = train_cfg.batch_size*train_cfg.group_size
     total_loss = 0
-    cost_loss = 0
-    valid_loss = 0
+    total_cost_loss = 0
+    total_valid_loss = 0
     valid_moves_ratio = 0
     inv_pen = train_cfg.inv_mov_penalization
 
     optimizer.zero_grad()
 
-    with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
       for batch_i in range(train_cfg.batch_size):
         hardware = train_cfg.hardware_sampler.sample()
         train_cfg.circ_sampler.num_lq = hardware.n_qubits
@@ -601,16 +601,16 @@ class DirectAllocator:
           valid_moves_ratio += valid_moves.float().mean().item()
 
         all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-        item_cost_loss = torch.sum(all_costs*action_log_probs)
-        cost_loss += item_cost_loss.item()
-        item_valid_loss = torch.sum(inv_moves_sum)
-        valid_loss += item_valid_loss.item()
+        cost_loss = torch.sum(all_costs*action_log_probs)
+        total_cost_loss += cost_loss.item()
+        valid_loss = torch.sum(inv_moves_sum)
+        total_valid_loss += valid_loss.item()
         loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
         loss.backward()
         total_loss += loss.item()
     torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
     optimizer.step()
-    return loss, cost_loss, valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
+    return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
   
 
   def _validation(self, train_cfg: TrainConfig) -> float:
