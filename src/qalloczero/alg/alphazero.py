@@ -52,7 +52,11 @@ class AlphaZero:
     self.backend = backend.value(
       device=device,
     )
-    self.pred_model = PredictionModel(layers=model_cfg.layers)
+    self.pred_model = PredictionModel(
+      embed_size=model_cfg.embed_size,
+      num_heads=model_cfg.num_heads,
+      num_layers=model_cfg.num_layers,
+    )
     self.backend.load_model(self.pred_model)
     self.pred_model.to(device)
 
@@ -60,7 +64,9 @@ class AlphaZero:
   def save(self, path: str, overwrite: bool = False):
     params = dict(
       backend=self.backend.__class__.__name__,
-      layers=self.model_cfg.layers,
+      embed_size=self.model_cfg.embed_size,
+      num_heads=self.model_cfg.num_heads,
+      num_layers=self.model_cfg.num_layers,
     )
     if os.path.isdir(path):
       warnings.warn(f"provided folder \"{path}\" already exists")
@@ -90,7 +96,11 @@ class AlphaZero:
     # Add backend so that it is possible to load non AlphaZero saved models
     if 'backend' not in params.keys():
       params["backend"] = 'TSCppEngine'
-    model_cfg = ModelConfigs(layers=params['layers'])
+    model_cfg = ModelConfigs(
+      embed_size=params['embed_size'],
+      num_heads=params['num_heads'],
+      num_layers=params['num_layers'],
+    )
     backend = AlphaZero.Backend.Cpp if params["backend"] == 'TSCppEngine' else AlphaZero.Backend.Python
     loaded = AlphaZero(device=device, backend=backend, model_cfg=model_cfg)
     model_file = "pred_mod.pt"
