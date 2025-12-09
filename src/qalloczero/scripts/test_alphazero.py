@@ -58,6 +58,7 @@ def testing_pred_model():
   slice_gates = (((0,1),),((0,3),),((0,1),(2,3)))
   circ = Circuit(slice_gates=slice_gates, n_qubits=4)
   circuit_emb = circ.embedding
+  next_int = circ.next_interaction
   
   probs_batched, vals_batched, _ = pred_model(
     qubits=qubits,
@@ -66,6 +67,7 @@ def testing_pred_model():
     core_capacities=core_capacities,
     core_connectivity=core_connectivity,
     circuit_emb=circuit_emb,
+    next_interactions=next_int
   )
 
   probs_single = []

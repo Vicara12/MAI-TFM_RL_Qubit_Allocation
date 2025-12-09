@@ -30,9 +30,19 @@ class PredictionModel(torch.nn.Module):
     num_layers: int,
   ):
     super().__init__()
-    self.h = 8 # Size of the feature space (number of features)
-    self.ff_up = torch.nn.Linear(self.h, embed_size)
-    self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
+    self.h = 10 # Size of the feature space (number of features)
+    self.ff_up = torch.nn.Sequential(
+      torch.nn.Linear(self.h, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.ReLU(),
+    )
+    self.ff_up_q = torch.nn.Sequential(
+      torch.nn.Linear(2*self.h, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.ReLU(),
+    )
     self.ff_down = torch.nn.Linear(embed_size, 1)
     encoder_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,
@@ -161,21 +171,21 @@ class PredictionModel(torch.nn.Module):
     return affinities.reshape(orig_shape)
 
 
-  def _format_circuit_emb(
+  def _format_circuit_data(
     self,
-    circuit_emb: torch.Tensor,
+    circuit_data: torch.Tensor,
     qubits: torch.Tensor,
     C: int
   ) -> Tuple[torch.Tensor, torch.Tensor]:
-    (B,Q,Q) = circuit_emb.shape
-    ce_q0 = circuit_emb[torch.arange(B), qubits[:,0]] # [B,C,Q]
-    ce_q1 = torch.zeros_like(ce_q0)                   # [B,C,Q]
+    (B,Q,Q) = circuit_data.shape
+    info_q0 = circuit_data[torch.arange(B), qubits[:,0]] # [B,C,Q]
+    info_q1 = torch.zeros_like(info_q0)                   # [B,C,Q]
     double_qubits = (qubits[:,1] != -1)
     if double_qubits.any():
-      ce_q1[double_qubits] = circuit_emb[double_qubits, qubits[double_qubits,1]]
-    ce_q0 = ce_q0.unsqueeze(1).expand(-1,C,-1)
-    ce_q1 = ce_q1.unsqueeze(1).expand(-1,C,-1)
-    return ce_q0, ce_q1
+      info_q1[double_qubits] = circuit_data[double_qubits, qubits[double_qubits,1]]
+    info_q0 = info_q0.unsqueeze(1).expand(-1,C,-1)
+    info_q1 = info_q1.unsqueeze(1).expand(-1,C,-1)
+    return info_q0, info_q1
 
 
   def _format_input(
@@ -186,6 +196,7 @@ class PredictionModel(torch.nn.Module):
     core_capacities: torch.Tensor,
     core_connectivity: torch.Tensor,
     circuit_emb: torch.Tensor,
+    next_interactions: torch.Tensor,
   ) -> torch.Tensor:
     (B,C) = core_capacities.shape
     (B,Q) = current_core_allocs.shape
@@ -197,7 +208,8 @@ class PredictionModel(torch.nn.Module):
     core_cost = self._get_core_cost(
       qubits, prev_core_allocs, core_capacities, core_connectivity, Q, C)
     core_attraction = self._get_core_attraction(C, circuit_emb, prev_core_allocs)
-    ce_q0, ce_q1 = self._format_circuit_emb(circuit_emb, qubits, C)
+    ce_q0, ce_q1 = self._format_circuit_data(circuit_emb, qubits, C)
+    ni_q0, ni_q1 = self._format_circuit_data(next_interactions, qubits, C)
     return torch.cat([
       qubit_matrix.unsqueeze(-1),
       prev_core.unsqueeze(-1),
@@ -207,6 +219,8 @@ class PredictionModel(torch.nn.Module):
       core_attraction.unsqueeze(-1),
       ce_q0.unsqueeze(-1),
       ce_q1.unsqueeze(-1),
+      ni_q0.unsqueeze(-1),
+      ni_q1.unsqueeze(-1),
     ], dim=-1) # [B,C,Q,h]
 
 
@@ -264,6 +278,7 @@ class PredictionModel(torch.nn.Module):
       core_capacities: torch.Tensor,
       core_connectivity: torch.Tensor,
       circuit_emb: torch.Tensor,
+      next_interactions: torch.Tensor,
   ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     ''' Get the per-core allocation probability and normalized value function for the current state.
 
@@ -293,7 +308,14 @@ class PredictionModel(torch.nn.Module):
         of the allocating the input state.
     '''
     inputs = self._format_input(
-      qubits, prev_core_allocs, current_core_allocs, core_capacities, core_connectivity, circuit_emb)
+      qubits,
+      prev_core_allocs,
+      current_core_allocs,
+      core_capacities,
+      core_connectivity,
+      circuit_emb,
+      next_interactions,
+    )
     key_embs, q_embs = self._get_embeddings(inputs, qubits)
     logits = self._project(key_embs, q_embs) # [B,C]
     vals = torch.tensor([[0.4] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder

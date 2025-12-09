@@ -202,6 +202,7 @@ class DirectAllocator:
     self,
     allocations: torch.Tensor,
     circ_embs: torch.Tensor,
+    next_interactions: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: DAConfig,
     hardware: Hardware,
@@ -237,6 +238,7 @@ class DirectAllocator:
         core_capacities=core_caps.unsqueeze(0),
         core_connectivity=hardware.core_connectivity.to(self.device),
         circuit_emb=circ_embs[:,slice_idx],
+        next_interactions=next_interactions[:,slice_idx]
       )
       pol = pol.squeeze(0)
       log_pol = log_pol.squeeze(0)
@@ -271,6 +273,7 @@ class DirectAllocator:
     self,
     allocations: torch.Tensor,
     circ_embs: torch.Tensor,
+    next_interactions: torch.Tensor,
     alloc_slices: list[tuple[int, list[int], list[tuple[int,int]]]],
     cfg: DAConfig,
     hardware: Hardware,
@@ -311,6 +314,7 @@ class DirectAllocator:
           core_capacities=core_caps.expand((len(paired_qubits), hardware.n_cores)),
           core_connectivity=dev_core_con,
           circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
+          next_interactions=next_interactions[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
         )
         qubit_set, core, valid = self._sample_action_parallel(
           logits=log_pol,
@@ -346,6 +350,7 @@ class DirectAllocator:
           core_capacities=core_caps.expand((len(free_qubits), hardware.n_cores)),
           core_connectivity=dev_core_con,
           circuit_emb=circ_embs[:,slice_idx,:,:],
+          next_interactions=next_interactions[:,slice_idx,:,:],
         )
         qubit_set, core, valid = self._sample_action_parallel(
           logits=log_pol,
@@ -383,6 +388,7 @@ class DirectAllocator:
       return self._allocate_sequential(
         allocations=allocations,
         circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        next_interactions=circuit.next_interaction.to(self.device).unsqueeze(0),
         alloc_steps=circuit.alloc_steps,
         cfg=cfg,
         hardware=hardware,
@@ -393,6 +399,7 @@ class DirectAllocator:
       return self._allocate_parallel(
         allocations=allocations,
         circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
+        next_interactions=circuit.next_interaction.to(self.device).unsqueeze(0),
         alloc_slices=circuit.alloc_slices,
         cfg=cfg,
         hardware=hardware,
@@ -486,8 +493,8 @@ class DirectAllocator:
       t = []
     )
     init_t = time()
-    if self.device.type == "cuda":
-      torch.backends.cudnn.benchmark = True
+    # if self.device.type == "cuda":
+    #   torch.backends.cudnn.benchmark = True
     best_model = dict(val_cost=None, vc_mean=None, model_state=None, opt_state=None, noise=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
 
@@ -574,40 +581,40 @@ class DirectAllocator:
 
     optimizer.zero_grad()
 
-    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-      for batch_i in range(train_cfg.batch_size):
-        hardware = train_cfg.hardware_sampler.sample()
-        train_cfg.circ_sampler.num_lq = hardware.n_qubits
-        circuit = train_cfg.circ_sampler.sample()
-        all_costs = torch.empty([train_cfg.group_size], device=self.device)
-        action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
-        inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
+    # with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+    for batch_i in range(train_cfg.batch_size):
+      hardware = train_cfg.hardware_sampler.sample()
+      train_cfg.circ_sampler.num_lq = hardware.n_qubits
+      circuit = train_cfg.circ_sampler.sample()
+      all_costs = torch.empty([train_cfg.group_size], device=self.device)
+      action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
+      inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
 
-        for group_i in range(train_cfg.group_size):
-          opt_n = group_i + batch_i*train_cfg.group_size
-          print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
-          allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-          log_probs, valid_moves = self._allocate(
-            allocations=allocations,
-            circuit=circuit,
-            cfg=opt_cfg,
-            hardware=hardware,
-            ret_train_data=True,
-          )
-          cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
-          all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
-          action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
-          inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
-          valid_moves_ratio += valid_moves.float().mean().item()
+      for group_i in range(train_cfg.group_size):
+        opt_n = group_i + batch_i*train_cfg.group_size
+        print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
+        allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
+        log_probs, valid_moves = self._allocate(
+          allocations=allocations,
+          circuit=circuit,
+          cfg=opt_cfg,
+          hardware=hardware,
+          ret_train_data=True,
+        )
+        cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
+        all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
+        action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
+        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+        valid_moves_ratio += valid_moves.float().mean().item()
 
-        all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-        cost_loss = torch.sum(all_costs*action_log_probs)
-        total_cost_loss += cost_loss.item()
-        valid_loss = torch.sum(inv_moves_sum)
-        total_valid_loss += valid_loss.item()
-        loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
-        loss.backward()
-        total_loss += loss.item()
+      all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
+      cost_loss = torch.sum(all_costs*action_log_probs)
+      total_cost_loss += cost_loss.item()
+      valid_loss = torch.sum(inv_moves_sum)
+      total_valid_loss += valid_loss.item()
+      loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
+      loss.backward()
+      total_loss += loss.item()
     torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
     optimizer.step()
     return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)

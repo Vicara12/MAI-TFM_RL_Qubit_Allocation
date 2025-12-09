@@ -20,9 +20,9 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    # hqa = HQA(lookahead=True, verbose=True),
-    da_seq  = DirectAllocator.load("trained/da_v11",    device="cpu", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    # da_par  = DirectAllocator.load("trained/da_v10",    device="cuda").set_mode(DirectAllocator.Mode.Parallel),
+    hqa = HQA(lookahead=True, verbose=True),
+    da_seq  = DirectAllocator.load("trained/da_v7",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_par  = DirectAllocator.load("trained/da_v7",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
@@ -109,8 +109,8 @@ def benchmark():
 
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_sequential = DirectAllocator.load("trained/da_v11", device="cpu", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    # da_parallel   = DirectAllocator.load("trained/da_v10", device="cuda").set_mode(DirectAllocator.Mode.Parallel),
+    da_sequential = DirectAllocator.load("trained/da_v7", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v7", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/az", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),

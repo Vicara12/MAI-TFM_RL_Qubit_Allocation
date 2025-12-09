@@ -55,19 +55,13 @@ class HotRandomCircuit(CircuitSampler):
     super().__init__(num_lq)
     self.num_slices = num_slices
   
-  def _get_ab(self, a):
-    b = random.randint(0,self.num_lq_-1)
-    while b == a:
-      b = random.randint(0,self.num_lq_-1)
-    return random.choice([(a,b), (b,a)])
-
   def sample(self) -> Circuit:
     int_num_slices = self.num_slices() if callable(self.num_slices) else self.num_slices
-    a = random.randint(0,self.num_lq_-1)
-    circuit_slice_gates = [(self._get_ab(a),) for _ in range(int_num_slices)]
+    qubits = list(range(self.num_lq))
+    random.shuffle(qubits)
+    circuit_slice_gates = [((qubits[0],qubits[1+(n%(self.num_lq-1))]),) for n in range(int_num_slices)]
     return Circuit(slice_gates=tuple(circuit_slice_gates), n_qubits=self.num_lq)
   
-
   def __str__(self):
     if self.num_slices is Callable:
       ns = str(self.num_slices())

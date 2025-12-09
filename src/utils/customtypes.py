@@ -105,6 +105,12 @@ class Circuit:
       self.embedding_ = self._get_embedding()
     return self.embedding_
 
+  @property
+  def next_interaction(self) -> torch.Tensor:
+    if not hasattr(self, 'next_interaction_'):
+      self.next_interaction_ = self._get_next_interaction()
+    return self.next_interaction_
+
 
   def _get_alloc_slices(self) -> list[tuple[int, list[int], list[tuple[int,int]]]]:
     gates_per_slice = [len(s) for s in self.slice_gates]
@@ -130,6 +136,17 @@ class Circuit:
     for slice_i in range(self.n_slices-2,-1,-1):
       embeddings[slice_i] = 0.5 * (embeddings[slice_i + 1] + adj[slice_i])
     return embeddings
+
+  def _get_next_interaction(self) -> torch.Tensor:
+    adj = self.adj_matrices
+    next_interaction = torch.empty_like(adj)
+    next_interaction[-1] = adj[-1]
+    for i in range(len(adj)-2, -1, -1):
+      sl_to_end = self.n_slices - i
+      next_interaction[i] = torch.max(sl_to_end * adj[i], next_interaction[i+1])
+    for i in range(0, len(adj)):
+      next_interaction[i] /= self.n_slices - i
+    return next_interaction
   
 
   def _get_alloc_order(self, order=True) -> torch.Tensor:
