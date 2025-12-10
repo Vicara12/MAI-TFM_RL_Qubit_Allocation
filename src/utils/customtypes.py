@@ -4,6 +4,7 @@ import torch
 from collections import defaultdict
 from dataclasses import dataclass
 from qiskit import transpile
+from random import randint
 from qiskit.transpiler import CouplingMap
 from qiskit.circuit import QuantumCircuit
 
@@ -38,7 +39,7 @@ class Circuit:
 
 
   @staticmethod
-  def from_qiskit(circuit, n_qubits: Optional[int] = None) -> Circuit:
+  def from_qiskit(circuit, n_qubits: Optional[int] = None, cap_qubits: bool = False) -> Circuit:
     circuit = transpile(
       circuit,
       coupling_map=CouplingMap().from_full(circuit.num_qubits),
@@ -55,10 +56,20 @@ class Circuit:
       n_qubits = circuit.num_qubits
     gates = []
     for ins in circuit:
+      if ins.name == 'barrier':
+        continue
       qubits = tuple(circuit.find_bit(q)[0] for q in ins.qubits)
-      if len(qubits) == 2:
+      if n_qubits is not None and max(qubits) >= n_qubits:
+        if cap_qubits:
+          if qubits[0] >= n_qubits:
+            qubits[0] = randint(0, n_qubits-1)
+            while qubits[1] >= n_qubits or qubits[0] == qubits[1]:
+              qubits[1] = randint(0, n_qubits-1)
+        else:
+          raise ValueError(f"Circuit contains more qubits than expected ({n_qubits}) at gate: {qubits}")
+      if len(qubits) == 2 and len(set(qubits)) == 2:
         gates.append(qubits)
-      elif len(qubits) > 2 and ins.name != 'barrier':
+      elif len(qubits) > 2:
         raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
     return Circuit.from_gate_list(gates, n_qubits)
 

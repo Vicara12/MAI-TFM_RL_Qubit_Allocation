@@ -191,25 +191,18 @@ def _build_w_state(n):
 class RealCircuit(CircuitSampler):
     def __init__(self, num_lq: int, max_slices: int):
         super().__init__(num_lq)
-        self.max_slices = max_slices
-
-    def _replace(self, t):
-        if isinstance(t, int):
-            return t if t < self.num_lq else np.random.randint(0, self.num_lq)
-        return tuple(self._replace(ti) for ti in t)
-            
+        self.max_slices = max_slices            
     
     def sample(self) -> Circuit:
         n_slices = 0
         while n_slices == 0:
             circuit = get_real_circuit(num_qubits=self.num_lq, circuit_number=np.random.randint(0,40))
-            circuit = Circuit.from_qiskit(circuit, self.num_lq)
+            circuit = Circuit.from_qiskit(circuit, self.num_lq, cap_qubits=True)
             n_slices = circuit.n_slices
         slices = circuit.slice_gates
         if n_slices > self.max_slices:
             init_slice = np.random.randint(0,n_slices - self.max_slices)
             slices = slices[init_slice:(init_slice+self.max_slices)]
-        slices = self._replace(slices)
         return Circuit(slice_gates=slices, n_qubits=circuit.n_qubits)
 
     def __str__(self):
