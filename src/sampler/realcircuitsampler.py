@@ -203,7 +203,7 @@ class RealCircuit(CircuitSampler):
         if n_slices > self.max_slices:
             init_slice = np.random.randint(0,n_slices - self.max_slices)
             slices = slices[init_slice:(init_slice+self.max_slices)]
-        return Circuit(slice_gates=slices, n_qubits=circuit.n_qubits)
+        return Circuit(slice_gates=slices, n_qubits=self.num_lq)
 
     def __str__(self):
         return f'RealCircuit(num_lq={self.num_lq})'

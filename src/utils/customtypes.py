@@ -58,17 +58,17 @@ class Circuit:
     for ins in circuit:
       if ins.name == 'barrier':
         continue
-      qubits = tuple(circuit.find_bit(q)[0] for q in ins.qubits)
-      if n_qubits is not None and max(qubits) >= n_qubits:
-        if cap_qubits:
-          if qubits[0] >= n_qubits:
-            qubits[0] = randint(0, n_qubits-1)
+      qubits = list(circuit.find_bit(q)[0] for q in ins.qubits)
+      if len(qubits) == 2 and len(set(qubits)) == 2:
+        if max(qubits) >= n_qubits:
+          if cap_qubits:
+            if qubits[0] >= n_qubits:
+              qubits[0] = randint(0, n_qubits-1)
             while qubits[1] >= n_qubits or qubits[0] == qubits[1]:
               qubits[1] = randint(0, n_qubits-1)
-        else:
-          raise ValueError(f"Circuit contains more qubits than expected ({n_qubits}) at gate: {qubits}")
-      if len(qubits) == 2 and len(set(qubits)) == 2:
-        gates.append(qubits)
+          else:
+            raise ValueError(f"Circuit contains more qubits than expected ({n_qubits}) at gate: {qubits}")
+        gates.append(tuple(qubits))
       elif len(qubits) > 2:
         raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
     return Circuit.from_gate_list(gates, n_qubits)
@@ -78,6 +78,8 @@ class Circuit:
   def from_gate_list(gates: list[tuple[int,int]], n_qubits: Optional[int] = None) -> Circuit:
     slices = defaultdict(list)
     used_qubits = defaultdict(set)
+
+    gates = tuple(g for g in gates if g[0] != g[1])
     
     def add_gate(gate_id, t):
       q_set = set(gates[gate_id])
