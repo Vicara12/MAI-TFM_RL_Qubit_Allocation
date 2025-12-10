@@ -18,6 +18,8 @@ if __name__ == '__main__':
 
   for i in range(81):
     circ = sampler.sample()
+    if circ.n_slices == 0:
+      print('----------------------------------------------')
     print(f"{i}: ns={circ.n_slices} ng={circ.n_gates} nq={circ.n_qubits}")
 
   # russo = dict(

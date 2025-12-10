@@ -32,8 +32,6 @@ def get_real_circuit(num_qubits, circuit_number):
         lambda n: TwoLocal(n, 'h', 'cx', entanglement='sca', reps=2),                # ID 11
         
         # --- 2. Feature Maps ---
-        lambda n: ZFeatureMap(n, reps=2), # ID 12
-        lambda n: ZFeatureMap(n, reps=4), # ID 13
         
         lambda n: ZZFeatureMap(n, reps=1, entanglement='linear'),   # ID 14
         lambda n: ZZFeatureMap(n, reps=2, entanglement='full'),     # ID 15
@@ -41,7 +39,6 @@ def get_real_circuit(num_qubits, circuit_number):
         
         lambda n: PauliFeatureMap(n, reps=1, paulis=['X', 'Y', 'ZZ']), # ID 17
         lambda n: PauliFeatureMap(n, reps=2, paulis=['Z', 'XX']),      # ID 18
-        lambda n: PauliFeatureMap(n, reps=2, paulis=['Y', 'Z']),       # ID 19
 
         # --- 3. Arithmetic & Logic ---
         lambda n: QFT(n, do_swaps=True),                # ID 20
@@ -64,8 +61,6 @@ def get_real_circuit(num_qubits, circuit_number):
         # Bernstein-Vazirani (Variant 3)
         lambda n: _build_bv(n), # ID 29
 
-        # Deutsch-Jozsa (Constant)
-        lambda n: _build_dj_constant(n), # ID 30
         # Deutsch-Jozsa (Balanced)
         lambda n: _build_dj_balanced(n), # ID 31
 
@@ -199,9 +194,11 @@ class RealCircuit(CircuitSampler):
         self.max_slices = max_slices
     
     def sample(self) -> Circuit:
-        circuit = get_real_circuit(num_qubits=self.num_lq, circuit_number=np.random.randint(0,40))
-        circuit = Circuit.from_qiskit(circuit, self.num_lq)
-        n_slices = circuit.n_slices
+        n_slices = 0
+        while n_slices == 0:
+            circuit = get_real_circuit(num_qubits=self.num_lq, circuit_number=np.random.randint(0,40))
+            circuit = Circuit.from_qiskit(circuit, self.num_lq)
+            n_slices = circuit.n_slices
         if n_slices > self.max_slices:
             init_slice = np.random.randint(0,n_slices - self.max_slices)
             new_slices = circuit.slice_gates[init_slice:(init_slice+self.max_slices)]
