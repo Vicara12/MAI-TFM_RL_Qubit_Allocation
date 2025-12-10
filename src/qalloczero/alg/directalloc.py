@@ -575,50 +575,56 @@ class DirectAllocator:
   ) -> float:
     self.pred_model.train()
     n_total = train_cfg.batch_size*train_cfg.group_size
-    total_loss = 0
-    total_cost_loss = 0
-    total_valid_loss = 0
-    valid_moves_ratio = 0
     inv_pen = train_cfg.inv_mov_penalization
 
-    optimizer.zero_grad()
+    while True:
+      total_loss = 0
+      total_cost_loss = 0
+      total_valid_loss = 0
+      valid_moves_ratio = 0
+      optimizer.zero_grad()
+      try:
+        # with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+        for batch_i in range(train_cfg.batch_size):
+          hardware = train_cfg.hardware_sampler.sample()
+          train_cfg.circ_sampler.num_lq = hardware.n_qubits
+          circuit = train_cfg.circ_sampler.sample()
+          all_costs = torch.empty([train_cfg.group_size], device=self.device)
+          action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
+          inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
 
-    # with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-    for batch_i in range(train_cfg.batch_size):
-      hardware = train_cfg.hardware_sampler.sample()
-      train_cfg.circ_sampler.num_lq = hardware.n_qubits
-      circuit = train_cfg.circ_sampler.sample()
-      all_costs = torch.empty([train_cfg.group_size], device=self.device)
-      action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
-      inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
+          for group_i in range(train_cfg.group_size):
+            opt_n = group_i + batch_i*train_cfg.group_size
+            print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
+            allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
+            log_probs, valid_moves = self._allocate(
+              allocations=allocations,
+              circuit=circuit,
+              cfg=opt_cfg,
+              hardware=hardware,
+              ret_train_data=True,
+            )
+            cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
+            all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
+            action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
+            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+            valid_moves_ratio += valid_moves.float().mean().item()
 
-      for group_i in range(train_cfg.group_size):
-        opt_n = group_i + batch_i*train_cfg.group_size
-        print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
-        allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-        log_probs, valid_moves = self._allocate(
-          allocations=allocations,
-          circuit=circuit,
-          cfg=opt_cfg,
-          hardware=hardware,
-          ret_train_data=True,
-        )
-        cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
-        all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
-        action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
-        inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
-        valid_moves_ratio += valid_moves.float().mean().item()
-
-      all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-      cost_loss = torch.sum(all_costs*action_log_probs)
-      total_cost_loss += cost_loss.item()
-      valid_loss = torch.sum(inv_moves_sum)
-      total_valid_loss += valid_loss.item()
-      loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
-      loss.backward()
-      total_loss += loss.item()
-    torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
-    optimizer.step()
+          all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
+          cost_loss = torch.sum(all_costs*action_log_probs)
+          total_cost_loss += cost_loss.item()
+          valid_loss = torch.sum(inv_moves_sum)
+          total_valid_loss += valid_loss.item()
+          loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
+          loss.backward()
+          total_loss += loss.item()
+        torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
+        optimizer.step()
+        break
+      except torch.cuda.OutOfMemoryError:
+        print(" Ran out of VRAM! Retrying...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
     return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
   
 

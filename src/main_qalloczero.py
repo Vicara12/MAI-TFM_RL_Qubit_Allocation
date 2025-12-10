@@ -30,5 +30,5 @@ if __name__ == "__main__":
   # validate()
   # benchmark()
   validate()
-  benchmark()
+  # benchmark()
   # compare_w_sota()
