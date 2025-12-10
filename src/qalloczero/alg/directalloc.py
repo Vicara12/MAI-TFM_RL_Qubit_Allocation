@@ -625,6 +625,14 @@ class DirectAllocator:
         print(" Ran out of VRAM! Retrying...")
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+      except RuntimeError as e:
+        if "CUBLAS_STATUS_ALLOC_FAILED" in str(e):
+          print("cuBLAS failed to allocate memory! Retrying...")
+          torch.cuda.empty_cache()
+          torch.cuda.synchronize()
+        else:
+          raise
+
     return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
   
 

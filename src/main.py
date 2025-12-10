@@ -133,7 +133,7 @@ def finetune_model_da(name: str):
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f'trained/{name}_ft',
-    initial_noise=0,
+    initial_noise=0.05,
     noise_decrease_factor=0.997,
     min_noise=0.0,
     circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
@@ -244,15 +244,15 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  allocator = DirectAllocator(
-    device='cuda',
-    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
-    mode=DirectAllocator.Mode.Sequential,
-  )
-  train_model_da(allocator, name="da")
+  # allocator = DirectAllocator(
+  #   device='cuda',
+  #   model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+  #   mode=DirectAllocator.Mode.Sequential,
+  # )
+  # train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
-  # finetune_model_da(name="da_v10")
+  finetune_model_da(name="da_v13")
 
   ''' Train the base models with qalloczero '''
   # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")
