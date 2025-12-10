@@ -48,6 +48,7 @@ class DirectAllocator:
     inv_mov_penalization: float
     hardware_sampler: HardwareSampler
     mask_invalid: bool
+    dropout: float = 0.0
 
 
   def __init__(
@@ -492,6 +493,7 @@ class DirectAllocator:
       vm=[],
       t = []
     )
+    self.pred_model.set_dropout(train_cfg.dropout)
     init_t = time()
     # if self.device.type == "cuda":
     #   torch.backends.cudnn.benchmark = True

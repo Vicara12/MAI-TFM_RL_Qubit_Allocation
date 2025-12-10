@@ -3,6 +3,8 @@ from typing import TypeAlias, Tuple, Optional
 import torch
 from collections import defaultdict
 from dataclasses import dataclass
+from qiskit import transpile
+from qiskit.transpiler import CouplingMap
 from qiskit.circuit import QuantumCircuit
 
 GateType: TypeAlias = Tuple[int,int]
@@ -23,6 +25,32 @@ class Circuit:
   @staticmethod
   def from_qasm(qasm_file: str, n_qubits: Optional[int] = None) -> Circuit:
     circuit = QuantumCircuit.from_qasm_file(qasm_file)
+    if n_qubits is None:
+      n_qubits = circuit.num_qubits
+    gates = []
+    for ins in circuit:
+      qubits = tuple(circuit.find_bit(q)[0] for q in ins.qubits)
+      if len(qubits) == 2:
+        gates.append(qubits)
+      elif len(qubits) > 2 and ins.name != 'barrier':
+        raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
+    return Circuit.from_gate_list(gates, n_qubits)
+
+
+  @staticmethod
+  def from_qiskit(circuit, n_qubits: Optional[int] = None) -> Circuit:
+    circuit = transpile(
+      circuit,
+      coupling_map=CouplingMap().from_full(circuit.num_qubits),
+      optimization_level=3
+    )
+
+    count = 0
+    while circuit.num_nonlocal_gates() != len(circuit.get_instructions('cx')) and count < 20:
+        circuit = circuit.decompose()
+        count += 1
+        if count == 20:
+            raise ValueError('Decomposition stopped by count!')
     if n_qubits is None:
       n_qubits = circuit.num_qubits
     gates = []
