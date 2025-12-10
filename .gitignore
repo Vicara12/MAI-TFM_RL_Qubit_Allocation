@@ -14,3 +14,6 @@ docs/russo impl/results.csv
 gpu_usage.csv
 lol.py
 submodules
+docs/russo impl/alloc_results.json
+docs/russo impl/russo_exec.txt
+docs/russo impl/russo_gates.txt
