@@ -14,10 +14,17 @@ if __name__ == '__main__':
   #   file_name = 'example.svg',
   # )
 
-  sampler = RealCircuit(10, max_slices=42)
+  Circuit.from_gate_list(((5, 7), (8, 6), (0, 2), (0, 3), (8, 4), (5, 1), (8, 9), (6, 4), (0, 4), (0, 2)))
 
-  for i in range(1000):
+  sampler = RealCircuit(10, max_slices=100)
+
+  for i in range(10000):
     circ = sampler.sample()
+    # print(circ.slice_gates)
+    emb = circ.embedding
+    adj = circ.adj_matrices
+    ni = circ.next_interaction
+    as_ = circ.alloc_steps
     if circ.n_slices == 0:
       print('----------------------------------------------')
     print(f"{i}: ns={circ.n_slices} ng={circ.n_gates} nq={circ.n_qubits}")
