@@ -79,22 +79,24 @@ class Circuit:
     slices = defaultdict(list)
     used_qubits = defaultdict(set)
 
-    gates = tuple(g for g in gates if g[0] != g[1])
-    
-    def add_gate(gate_id, t):
-      q_set = set(gates[gate_id])
-      if used_qubits[t].intersection(q_set):
-        t += 1
-        slices[t].append(gate_id)
-        used_qubits[t] |= q_set
-      elif t == 0:
-        slices[t].append(gate_id)
-        used_qubits[t] |= q_set
-      else:
-        add_gate(gate_id, t-1)
+    gates = tuple(g for g in gates if g[0] != g[1])      
         
     for g in range(len(gates)):
-      add_gate(g, len(slices))
+      t = len(slices)
+      q_set = set(gates[g])
+      inserted = False
+      while not inserted:
+        if used_qubits[t].intersection(q_set):
+          t += 1
+          slices[t].append(g)
+          used_qubits[t] |= q_set
+          inserted = True
+        elif t == 0:
+          slices[t].append(g)
+          used_qubits[t] |= q_set
+          inserted = True
+        else:
+          t -= 1
     
     slice_gates = tuple(tuple(gates[id] for id in slice_ids) for slice_ids in slices.values())
     if n_qubits is None:

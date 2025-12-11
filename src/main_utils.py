@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
   sampler = RealCircuit(10, max_slices=42)
 
-  for i in range(81):
+  for i in range(1000):
     circ = sampler.sample()
     if circ.n_slices == 0:
       print('----------------------------------------------')
