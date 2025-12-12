@@ -144,7 +144,7 @@ def finetune_model_da(name: str):
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.01,
+    dropout=0.05,
   )
   allocator.train(train_cfg)
 

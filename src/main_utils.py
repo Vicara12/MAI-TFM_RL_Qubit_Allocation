@@ -4,6 +4,8 @@ from utils.allocutils import swaps_from_alloc, check_sanity_swap
 from utils.plotter import drawQubitAllocation
 from sampler.realcircuitsampler import RealCircuit
 
+from utils.memory import all_top, print_ram_usage
+
 
 
 if __name__ == '__main__':
@@ -25,8 +27,7 @@ if __name__ == '__main__':
     adj = circ.adj_matrices
     ni = circ.next_interaction
     as_ = circ.alloc_steps
-    if circ.n_slices == 0:
-      print('----------------------------------------------')
+    print_ram_usage()
     print(f"{i}: ns={circ.n_slices} ng={circ.n_gates} nq={circ.n_qubits}")
 
   # russo = dict(

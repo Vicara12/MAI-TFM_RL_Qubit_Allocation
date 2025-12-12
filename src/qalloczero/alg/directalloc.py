@@ -1,6 +1,7 @@
 import os
 import json
 import torch
+import gc
 import warnings
 from enum import Enum
 from time import time
@@ -16,6 +17,9 @@ from sampler.circuitsampler import CircuitSampler
 from qalloczero.alg.ts import ModelConfigs
 from qalloczero.models.predmodel import PredictionModel
 
+
+
+from utils.memory import all_top, print_ram_usage
 
 
 @dataclass
@@ -439,9 +443,7 @@ class DirectAllocator:
     self,
     val_cost: torch.Tensor,
     save_path:str,
-    noise: float,
     it: int,
-    optimizer: torch.optim.Optimizer
   ):
     vc_mean=val_cost.mean().item()
     chkpt_name = f"checkpt_{it+1}_{int(vc_mean*1000)}.pt"
@@ -449,9 +451,6 @@ class DirectAllocator:
     best_model = dict(
       val_cost=val_cost,
       vc_mean=vc_mean,
-      model_state=deepcopy(self.pred_model.state_dict()),
-      opt_state=deepcopy(optimizer.state_dict()),
-      noise=noise,
     )
     print(f"saving as {chkpt_name}")
     return best_model
@@ -484,6 +483,7 @@ class DirectAllocator:
         hws_range_ncores=train_cfg.hardware_sampler.range_ncores,
         min_noise=train_cfg.min_noise,
         mask_invalid=train_cfg.mask_invalid,
+        dropout=train_cfg.dropout,
       ),
       val_cost = [],
       loss = [],
@@ -495,13 +495,14 @@ class DirectAllocator:
     )
     self.pred_model.set_dropout(train_cfg.dropout)
     init_t = time()
-    # if self.device.type == "cuda":
-    #   torch.backends.cudnn.benchmark = True
-    best_model = dict(val_cost=None, vc_mean=None, model_state=None, opt_state=None, noise=None)
+    best_model = dict(val_cost=None, vc_mean=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
 
     try:
       for it in range(train_cfg.train_iters):
+
+        print_ram_usage()
+
         # Train
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
@@ -521,8 +522,8 @@ class DirectAllocator:
           vc_mean = val_cost.mean().item()
           data_log['val_cost'].append(vc_mean)
           print(f"\033[2K\r      vc={vc_mean:.4f}, ", end='')
-          if best_model['model_state'] is None:
-            best_model = self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
+          if best_model['val_cost'] is None:
+            best_model = self._update_best(val_cost, save_path, it)
           else:
             p = ttest_ind(val_cost.numpy(), best_model['val_cost'].numpy(), equal_var=False)[1]
             if p < 0.2:
@@ -532,12 +533,9 @@ class DirectAllocator:
               else:
                 print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
                 self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
-                # self.pred_model.load_state_dict(best_model['model_state'])
-                # optimizer.load_state_dict(best_model['opt_state'])
-                # opt_cfg.noise = best_model['noise']
             else:
               print(f"not enough significance wrt prev={best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
-              self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
+              self._update_best(val_cost, save_path, it)
           with open(os.path.join(save_path, "train_data.json"), "w") as f:
             json.dump(data_log, f, indent=2)
 
@@ -611,6 +609,7 @@ class DirectAllocator:
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
+          print(f'\ncosts: {" ".join([f"{v:.3f}" for v in all_costs.tolist()])}')
           cost_loss = torch.sum(all_costs*action_log_probs)
           total_cost_loss += cost_loss.item()
           valid_loss = torch.sum(inv_moves_sum)
@@ -623,15 +622,16 @@ class DirectAllocator:
         break
       except torch.cuda.OutOfMemoryError:
         print(" Ran out of VRAM! Retrying...")
+        if 'loss' in locals(): del loss
+        if 'cost_loss' in locals(): del cost_loss
+        if 'valid_loss' in locals(): del valid_loss
+        if 'action_log_probs' in locals(): del action_log_probs
+        if 'inv_moves_sum' in locals(): del inv_moves_sum
+        if 'log_probs' in locals(): del log_probs
+        if 'allocations' in locals(): del allocations
+        gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-      except RuntimeError as e:
-        if "CUBLAS_STATUS_ALLOC_FAILED" in str(e):
-          print("cuBLAS failed to allocate memory! Retrying...")
-          torch.cuda.empty_cache()
-          torch.cuda.synchronize()
-        else:
-          raise
 
     return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
   
