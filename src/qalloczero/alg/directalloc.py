@@ -529,10 +529,10 @@ class DirectAllocator:
             if p < 0.2:
               if vc_mean < best_model['vc_mean']:
                 print(f"better than prev {best_model['vc_mean']:.4f} with p={p:.3f}, updating and ", end='')
-                best_model = self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
+                best_model = self._update_best(val_cost, save_path, it)
               else:
                 print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
-                self._update_best(val_cost, save_path, opt_cfg.noise, it, optimizer)
+                self._update_best(val_cost, save_path, it)
             else:
               print(f"not enough significance wrt prev={best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
               self._update_best(val_cost, save_path, it)
