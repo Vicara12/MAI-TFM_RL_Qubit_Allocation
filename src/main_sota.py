@@ -54,7 +54,7 @@ def compare_sota(n_qubits: int):
         core_connectivity=(torch.ones([10,10]) - torch.eye(10)),
     )
     results = {
-        'russo': get_results_russo(100, circuits=circuits, hardware=hardware),
+        'russo': get_results_russo(n_qubits, circuits=circuits, hardware=hardware),
         'hqa': get_results_hqa(circuits=circuits, hardware=hardware),
     }
     costs = {name: data[0] for name, data in results.items()}

@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import TypeAlias, Tuple, Optional
 import torch
 from collections import defaultdict
-from dataclasses import dataclass
 from qiskit import transpile
 from random import randint
 from qiskit.transpiler import CouplingMap
@@ -13,11 +12,10 @@ CircSliceType: TypeAlias = Tuple[GateType, ...]
 
 
 
-@dataclass
 class Circuit:
-  slice_gates: Tuple[CircSliceType, ...]
-  n_qubits: int
-
+  def __init__(self, slice_gates: Tuple[CircSliceType, ...], n_qubits: int):
+    self.slice_gates = slice_gates
+    self.n_qubits = n_qubits
 
   def __str__(self):
     return f"Circuit(slice_gates={self.slice_gates}, n_qubits={self.n_qubits})"
@@ -160,7 +158,10 @@ class Circuit:
     remaining_gates_list = [sum(gates_per_slice[i:]) for i in range(1, self.n_slices+1)]
     alloc_slices = []
     for s, rem_gates in zip(self.slice_gates, remaining_gates_list):
-      paired_qubits = set(sum(s, tuple()))
+      if isinstance(s[0], tuple):
+        paired_qubits = set(sum(s, tuple()))
+      else:
+        paired_qubits = set(sum(s, []))
       free_qubits = tuple(set(range(self.n_qubits)) - paired_qubits)
       alloc_slices.append((rem_gates, free_qubits, s))
     return alloc_slices
@@ -238,17 +239,17 @@ class Circuit:
 
 
 
-@dataclass
 class Hardware:
-  core_capacities: torch.Tensor
-  core_connectivity: torch.Tensor
   # sparse_core_con: automatically set in init, has the core_connectivity matrix in sparse format
   # sparse_core_ws: weights of the sparse_core_con matrix
 
 
-  def __post_init__(self):
+  def __init__(self, core_capacities: torch.Tensor, core_connectivity: torch.Tensor):
     ''' Ensures the correctness of the data.
     '''
+    self.core_capacities = core_capacities
+    self.core_connectivity = core_connectivity
+
     assert len(self.core_capacities.shape) == 1, "Core capacities must be a vector"
     assert not torch.is_floating_point(self.core_capacities), "Core capacities must be of dtype int"
     assert all(self.core_capacities > 0), f"All core capacities should be greater than 0"

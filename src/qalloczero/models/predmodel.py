@@ -32,13 +32,13 @@ class PredictionModel(torch.nn.Module):
     super().__init__()
     self.h = 10 # Size of the feature space (number of features)
     self.ff_up = torch.nn.Linear(self.h, embed_size)
-    self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
-    # self.ff_up_q = torch.nn.Sequential(
-    #   torch.nn.Linear(2*self.h, embed_size),
-    #   torch.nn.ReLU(),
-    #   torch.nn.Linear(embed_size, embed_size),
-    #   torch.nn.ReLU(),
-    # )
+    # self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
+    self.ff_up_q = torch.nn.Sequential(
+      torch.nn.Linear(2*self.h, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.ReLU(),
+    )
     self.ff_down = torch.nn.Linear(embed_size, 1)
     encoder_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,

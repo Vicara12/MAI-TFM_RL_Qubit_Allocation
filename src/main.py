@@ -95,7 +95,7 @@ def train_model_da(allocator, name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=2_000,
+    train_iters=3_000,
     batch_size=1,
     group_size=32,
     validate_each=25,
@@ -106,14 +106,14 @@ def train_model_da(allocator, name: str):
     noise_decrease_factor=0.997,
     min_noise=0.0,
     circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
-      (0.80, RandomCircuit(     num_lq=24, num_slices=lambda: randint(8,32), reflow=0.5)),
-      (0.20, HotRandomCircuit(  num_lq=24, num_slices=lambda: randint(8,32))),
-      # (0.33, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,32))),
+      (0.4, RandomCircuit(     num_lq=24, num_slices=lambda: randint(8,32), reflow=0.5)),
+      (0.6, RealCircuit(       num_lq=24, max_slices=64)),
     ]),
     lr=5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
+    dropout=0.025,
   )
   allocator.train(train_cfg)
 
@@ -144,7 +144,7 @@ def finetune_model_da(name: str):
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.05,
+    dropout=0.1,
   )
   allocator.train(train_cfg)
 
@@ -244,15 +244,15 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  # allocator = DirectAllocator(
-  #   device='cuda',
-  #   model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
-  #   mode=DirectAllocator.Mode.Sequential,
-  # )
-  # train_model_da(allocator, name="da")
+  allocator = DirectAllocator(
+    device='cuda',
+    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+    mode=DirectAllocator.Mode.Sequential,
+  )
+  train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
-  finetune_model_da(name="da_v13")
+  # finetune_model_da(name="da_v13")
 
   ''' Train the base models with qalloczero '''
   # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")

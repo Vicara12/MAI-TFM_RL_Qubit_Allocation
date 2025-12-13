@@ -19,9 +19,6 @@ from qalloczero.models.predmodel import PredictionModel
 
 
 
-from utils.memory import all_top, print_ram_usage
-
-
 @dataclass
 class DAConfig:
   noise: float = 0.0
@@ -484,6 +481,7 @@ class DirectAllocator:
         min_noise=train_cfg.min_noise,
         mask_invalid=train_cfg.mask_invalid,
         dropout=train_cfg.dropout,
+        allocator=str(train_cfg.circ_sampler)
       ),
       val_cost = [],
       loss = [],
@@ -500,9 +498,6 @@ class DirectAllocator:
 
     try:
       for it in range(train_cfg.train_iters):
-
-        print_ram_usage()
-
         # Train
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
@@ -609,7 +604,6 @@ class DirectAllocator:
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-          print(f'\ncosts: {" ".join([f"{v:.3f}" for v in all_costs.tolist()])}')
           cost_loss = torch.sum(all_costs*action_log_probs)
           total_cost_loss += cost_loss.item()
           valid_loss = torch.sum(inv_moves_sum)
