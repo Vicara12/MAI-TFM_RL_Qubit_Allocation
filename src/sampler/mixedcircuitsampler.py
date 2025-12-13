@@ -22,4 +22,4 @@ class MixedCircuitSampler(CircuitSampler):
     return sampler.sample()
 
   def __str__(self) -> str:
-    raise f"MixedCircuitSampler(num_lq={self.num_lq}, samplers={list(zip(self.probs, self.samplers))})"
+    return f"MixedCircuitSampler(num_lq={self.num_lq}, samplers={list(zip(self.probs, self.samplers))})"
