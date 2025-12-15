@@ -193,13 +193,10 @@ class RealCircuit(CircuitSampler):
         while n_slices == 0:
             circ_n = np.random.randint(0,40)
             circuit = get_real_circuit(num_qubits=self.num_lq, circuit_number=circ_n)
-            circuit = Circuit.from_qiskit(circuit, self.num_lq, cap_qubits=True)
+            circuit = Circuit.from_qiskit(circuit, self.num_lq, cap_qubits=True, max_slices=self.max_slices)
             n_slices = circuit.n_slices
-        slices = circuit.slice_gates
-        init_slice = np.random.randint(0,n_slices - self.max_slices) if n_slices > self.max_slices else 0
-        slices = slices[init_slice:(init_slice+self.max_slices)]
-        print(f"Optimizing real circuit {circ_n} at slice {init_slice}")
-        return Circuit(slice_gates=slices, n_qubits=self.num_lq)
+        print(f"Optimizing real circuit {circ_n} with slices slices {n_slices}")
+        return circuit
 
     def __str__(self):
         return f'RealCircuit(num_lq={self.num_lq})'

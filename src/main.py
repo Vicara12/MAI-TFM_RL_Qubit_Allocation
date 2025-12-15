@@ -113,7 +113,7 @@ def train_model_da(allocator, name: str):
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.025,
+    dropout=0.05,
   )
   allocator.train(train_cfg)
 

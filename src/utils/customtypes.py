@@ -37,7 +37,12 @@ class Circuit:
 
 
   @staticmethod
-  def from_qiskit(circuit, n_qubits: Optional[int] = None, cap_qubits: bool = False) -> Circuit:
+  def from_qiskit(
+    circuit,
+    n_qubits: Optional[int] = None,
+    cap_qubits: bool = False,
+    max_slices: Optional[int] = None
+  ) -> Circuit:
     circuit = transpile(
       circuit,
       coupling_map=CouplingMap().from_full(circuit.num_qubits),
@@ -69,37 +74,37 @@ class Circuit:
         gates.append(tuple(qubits))
       elif len(qubits) > 2:
         raise Exception(f"Circuit contains at least one gate with more than two qubits: {qubits} {ins}")
-    return Circuit.from_gate_list(gates, n_qubits)
+    return Circuit.from_gate_list(gates, n_qubits=n_qubits, n_slices=max_slices)
 
 
   @staticmethod
-  def from_gate_list(gates: list[tuple[int,int]], n_qubits: Optional[int] = None) -> Circuit:
-    slices = defaultdict(list)
-    used_qubits = defaultdict(set)
-
-    gates = tuple(g for g in gates if g[0] != g[1])      
-        
-    for g in range(len(gates)):
-      t = len(slices)
-      q_set = set(gates[g])
-      inserted = False
-      while not inserted:
+  def from_gate_list(
+    gates: list[tuple[int,int]],
+    n_qubits: Optional[int] = None,
+    n_slices: Optional[int] = None,
+  ) -> Circuit:
+    slices = [[]]
+    used_qubits = [set()]
+    gates_filt = filter(lambda x: x[0] != x[1], gates)
+    for g in gates_filt:
+      if n_slices is not None and len(slices) == n_slices+1:
+        break
+      q_set = set(g)
+      for t in range(len(slices)-1,-1,-1):
         if used_qubits[t].intersection(q_set):
-          t += 1
-          slices[t].append(g)
-          used_qubits[t] |= q_set
-          inserted = True
+          if t+1 == len(slices):
+            slices.append([])
+            used_qubits.append(set())
+          slices[t+1].append(g)
+          used_qubits[t+1] |= q_set
+          break
         elif t == 0:
           slices[t].append(g)
           used_qubits[t] |= q_set
-          inserted = True
-        else:
-          t -= 1
-    
-    slice_gates = tuple(tuple(gates[id] for id in slice_ids) for slice_ids in slices.values())
+          break
     if n_qubits is None:
-      n_qubits = max(max(g) for g in gates)
-    return Circuit(slice_gates=slice_gates, n_qubits=n_qubits)
+      n_qubits = max(max(max(g) for g in s) for s in slices)
+    return Circuit(slice_gates=slices[:-1], n_qubits=n_qubits)
 
 
   # Some more attribute declarations that are only computed when required (lazy

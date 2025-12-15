@@ -12,6 +12,7 @@ from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost, get_all_checkpoints
 from scipy.stats import ttest_ind
 from utils.timer import Timer
+from utils.memory import get_ram_usage
 from sampler.hardwaresampler import HardwareSampler
 from sampler.circuitsampler import CircuitSampler
 from qalloczero.alg.ts import ModelConfigs
@@ -84,6 +85,7 @@ class DirectAllocator:
 
 
   def _make_save_dir(self, path: str, overwrite: bool) -> str:
+    old_path = path
     if os.path.isdir(path):
       if not overwrite:
         i = 2
@@ -91,9 +93,9 @@ class DirectAllocator:
           i += 1
         path += f"_v{i}"
         os.makedirs(path)
-        warnings.warn(f"Provided folder \"{path}\" already exists, saving as \"{path}\"")
+        warnings.warn(f"Provided folder \"{old_path}\" already exists, saving as \"{path}\"")
       else:
-        warnings.warn(f"Provided folder \"{path}\" already exists, overwriting previous save file")
+        warnings.warn(f"Provided folder \"{old_path}\" already exists, overwriting previous save file")
     else:
       os.makedirs(path)
     self._save_model_cfg(path)
@@ -540,7 +542,8 @@ class DirectAllocator:
         print((
           f"{pheader} l={loss:.1f} (c={cost_loss:.1f} v={val_loss:.1f}) \t n={opt_cfg.noise:.3f} "
           f"vm={vm_ratio:.2f} t={self.iter_timer.time:.2f}s "
-          f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left)"
+          f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left) "
+          f"ram={get_ram_usage():.2f}GB"
         ))
         
         data_log['loss'].append(loss)
@@ -597,10 +600,10 @@ class DirectAllocator:
               hardware=hardware,
               ret_train_data=True,
             )
-            cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
+            cost = sol_cost(allocations=allocations.detach(), core_con=hardware.core_connectivity)
             all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
-            action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
-            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+            action_log_probs[group_i] = torch.sum(log_probs[valid_moves.detach()])
+            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves.detach()])
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
@@ -611,6 +614,11 @@ class DirectAllocator:
           loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
           loss.backward()
           total_loss += loss.item()
+          del circuit
+          del hardware
+          del cost_loss
+          del valid_loss
+          del loss
         torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
         optimizer.step()
         break

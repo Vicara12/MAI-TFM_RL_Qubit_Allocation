@@ -8,16 +8,18 @@ from collections import defaultdict
 import psutil
 import os
 
-def print_ram_usage():
-    # Get the ID of the current process
-    process = psutil.Process(os.getpid())
-    
-    # Get memory usage in bytes and convert to Megabytes (MB)
-    # rss = Resident Set Size (physical memory currently used)
-    mem_bytes = process.memory_info().rss 
-    mem_mb = mem_bytes / (1024 * 1024 * 1024)
-    
-    print(f"Current RAM Usage: {mem_mb:.6f} GB")
+
+def get_ram_usage():
+  process = psutil.Process(os.getpid())
+  
+  # Get memory usage in bytes and convert to Megabytes (MB)
+  # rss = Resident Set Size (physical memory currently used)
+  mem_bytes = process.memory_info().rss 
+  return mem_bytes / (1024 * 1024 * 1024)
+
+
+def print_ram_usage():  
+  print(f"Current RAM Usage: {get_ram_usage():.6f} GB")
 
 def print_memory_top_10():
   # Dictionary to store total size per type
