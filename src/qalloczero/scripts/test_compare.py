@@ -23,8 +23,8 @@ def validate():
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
     hqa = HQA(lookahead=True, verbose=True),
-    da_seq  = DirectAllocator.load("trained/da_v2",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    da_par  = DirectAllocator.load("trained/da_v2",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
+    da_seq  = DirectAllocator.load("trained/da",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_par  = DirectAllocator.load("trained/da",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     
     # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
     # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
@@ -97,22 +97,11 @@ def benchmark():
     core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
   )
 
-  # for (name, circ) in circuits.items():
-  #   drawCircuit(circ.slice_gates[:60], circ.n_qubits, name, save_name=f'{name}.svg')
-  # return
-
-  # path = "trained/da_v6"
-  # checks = sorted(list(get_all_checkpoints(path).keys()))[::4]
-
-  # alogs_seq = {f"da_seq_{i}": DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=i).set_mode(DirectAllocator.Mode.Sequential) for i in checks}
-  # alogs_par = {f"da_seq_{i}": DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=i).set_mode(DirectAllocator.Mode.Parallel) for i in checks}
-
-  # algos = alogs_par
 
   algos = dict(
     # hqa = HQA(lookahead=True, verbose=True),
-    da_sequential = DirectAllocator.load("trained/da_v2", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v2", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
+    da_sequential = DirectAllocator.load("trained/da", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/az", device="cpu"),
     # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
     # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
