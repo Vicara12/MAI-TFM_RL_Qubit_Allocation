@@ -113,7 +113,7 @@ def train_model_da(allocator, name: str):
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.05,
+    dropout=0.1,
   )
   allocator.train(train_cfg)
 
@@ -246,7 +246,7 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   allocator = DirectAllocator(
     device='cuda',
-    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+    model_cfg=ModelConfigs(embed_size=16, num_heads=2, num_layers=1),
     mode=DirectAllocator.Mode.Sequential,
   )
   train_model_da(allocator, name="da")

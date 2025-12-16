@@ -70,7 +70,7 @@ switch_cases = [
     lambda n: _build_simon(n), # ID 29
 
     # --- 5. Advanced / Library ---
-    lambda n: PhaseEstimation(num_evaluation_qubits=n-1, unitary=_get_t_gate_unitary()), # ID 30
+    # lambda n: PhaseEstimation(num_evaluation_qubits=n-1, unitary=_get_t_gate_unitary()), # ID 30
     
     lambda n: _build_hidden_shift(n), # ID 31
     
