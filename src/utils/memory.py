@@ -4,9 +4,29 @@ import torch
 import gc
 import sys
 from collections import defaultdict
+import inspect
 
 import psutil
 import os
+
+
+class RamLogger:
+  def initialize(self, save_folder):
+    self.save_file = os.path.join(save_folder, 'memory_log.txt')
+    self.iter = 0
+    self.logs = ['']
+  
+  def new_log_iter(self, iter: int):
+    with open(self.save_file, 'a') as f:
+      f.write('\n'.join(self.logs))
+    self.logs = ['']
+    self.iter = iter
+  
+  def check(self):
+    caller = inspect.stack()[1]
+    self.logs.append(f'{get_ram_usage():.6f},{self.iter},{caller.lineno},{caller.function},{caller.filename}')
+
+
 
 
 def get_ram_usage():
