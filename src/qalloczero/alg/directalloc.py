@@ -214,9 +214,9 @@ class DirectAllocator:
     verbose: bool = False,
   ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     core_caps_orig = hardware.core_capacities.to(self.device)
-    core_allocs = hardware.n_cores * torch.ones(
-      [hardware.n_qubits],
-      dtype=torch.long,
+    core_allocs = torch.zeros(
+      [hardware.n_cores, hardware.n_qubits],
+      dtype=torch.float,
       device=self.device,
     )
     prev_core_allocs = None
@@ -233,7 +233,7 @@ class DirectAllocator:
         
       if prev_slice != slice_idx:
         prev_core_allocs = core_allocs
-        core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
+        core_allocs = torch.zeros_like(core_allocs)
         core_caps = core_caps_orig.clone()
       pol, _, log_pol = self.pred_model(
         qubits=torch.tensor([qubit0, qubit1], dtype=torch.int, device=self.device).unsqueeze(0),
@@ -254,10 +254,10 @@ class DirectAllocator:
         cfg=cfg
       )
       allocations[slice_idx,qubit0] = action
-      core_allocs[qubit0] = action
+      core_allocs[action, qubit0] = 1
       if qubit1 != -1:
         allocations[slice_idx,qubit1] = action
-        core_allocs[qubit1] = action
+        core_allocs[action, qubit1] = 1
       if ret_train_data:
         all_probs.append(log_pol[action])
         all_valid.append(valid)
@@ -285,9 +285,9 @@ class DirectAllocator:
     verbose: bool = False,
   ) -> Optional[torch.Tensor]:
     core_caps_orig = hardware.core_capacities.to(self.device)
-    core_allocs = hardware.n_cores * torch.ones(
-      [hardware.n_qubits],
-      dtype=torch.long,
+    core_allocs = torch.zeros(
+      [hardware.n_cores, hardware.n_qubits],
+      dtype=torch.float,
       device=self.device,
     )
     prev_core_allocs = None
@@ -302,7 +302,7 @@ class DirectAllocator:
     
     for slice_idx, (_, free_qubits, paired_qubits) in enumerate(alloc_slices):
       prev_core_allocs = core_allocs
-      core_allocs = hardware.n_cores * torch.ones_like(core_allocs)
+      core_allocs = torch.zeros_like(core_allocs)
       core_caps = core_caps_orig.clone()
       paired_qubits = list(paired_qubits)
       free_qubits = list(free_qubits)
@@ -313,8 +313,8 @@ class DirectAllocator:
           step += 1
         pol, _, log_pol = self.pred_model(
           qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
-          prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
-          current_core_allocs=core_allocs.expand((len(paired_qubits), len(prev_core_allocs))),
+          prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), -1, -1)),
+          current_core_allocs=core_allocs.expand((len(paired_qubits), -1, -1)),
           core_capacities=core_caps.expand((len(paired_qubits), hardware.n_cores)),
           core_connectivity=dev_core_con,
           circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
@@ -327,9 +327,9 @@ class DirectAllocator:
           cfg=cfg
         )
         allocations[slice_idx,paired_qubits[qubit_set][0]] = core
-        core_allocs[paired_qubits[qubit_set][0]] = core
+        core_allocs[core, paired_qubits[qubit_set][0]] = 1
         allocations[slice_idx,paired_qubits[qubit_set][1]] = core
-        core_allocs[paired_qubits[qubit_set][1]] = core
+        core_allocs[core, paired_qubits[qubit_set][1]] = 1
         if ret_train_data:
           all_log_probs.append(log_pol[qubit_set, core])
           all_valid.append(valid)
@@ -349,11 +349,11 @@ class DirectAllocator:
         qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
         _, _, log_pol = self.pred_model(
           qubits=qubits,
-          prev_core_allocs=prev_core_allocs.expand((len(free_qubits), len(prev_core_allocs))),
-          current_core_allocs=core_allocs.expand((len(free_qubits), len(prev_core_allocs))),
+          prev_core_allocs=prev_core_allocs.expand((len(free_qubits), -1, -1)),
+          current_core_allocs=core_allocs.expand((len(free_qubits), -1, -1)),
           core_capacities=core_caps.expand((len(free_qubits), hardware.n_cores)),
           core_connectivity=dev_core_con,
-          circuit_emb=circ_embs[:,slice_idx,:,:],
+          circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(free_qubits), -1, -1)),
           next_interactions=next_interactions[:,slice_idx,:,:],
         )
         qubit_set, core, valid = self._sample_action_parallel(
@@ -363,7 +363,7 @@ class DirectAllocator:
           cfg=cfg
         )
         allocations[slice_idx,free_qubits[qubit_set]] = core
-        core_allocs[free_qubits[qubit_set]] = core
+        core_allocs[core, free_qubits[qubit_set]] = 1
         if ret_train_data:
           all_log_probs.append(log_pol[qubit_set, core])
           all_valid.append(valid)

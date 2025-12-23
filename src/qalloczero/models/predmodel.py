@@ -31,21 +31,39 @@ class PredictionModel(torch.nn.Module):
   ):
     super().__init__()
     self.h = 10 # Size of the feature space (number of features)
-    # self.ff_up = torch.nn.Linear(self.h, embed_size)
     self.ff_up = torch.nn.Sequential(
-     torch.nn.Linear(self.h, embed_size),
+     torch.nn.Linear(self.h, embed_size//2),
      torch.nn.ReLU(),
-     torch.nn.Linear(embed_size, embed_size),
+     torch.nn.Linear(embed_size//2, embed_size),
      torch.nn.ReLU(),
     )
     # self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
     self.ff_up_q = torch.nn.Sequential(
-     torch.nn.Linear(2*self.h, embed_size),
+     torch.nn.Linear(2*self.h, embed_size//2),
      torch.nn.ReLU(),
-     torch.nn.Linear(embed_size, embed_size),
+     torch.nn.Linear(embed_size//2, embed_size),
      torch.nn.ReLU(),
     )
-    self.ff_down = torch.nn.Linear(embed_size, 1)
+    self.ff_proj_q = torch.nn.Sequential(
+     torch.nn.Linear(2*self.h, embed_size//2),
+     torch.nn.ReLU(),
+     torch.nn.Linear(embed_size//2, embed_size),
+     torch.nn.ReLU(),
+    )
+    # self.ff_up = torch.nn.Sequential(
+    #  torch.nn.Linear(self.h, embed_size//2),
+    #  torch.nn.ReLU(),
+    #  torch.nn.Linear(embed_size//2, embed_size),
+    #  torch.nn.ReLU(),
+    # )
+    # # self.ff_up_q = torch.nn.Linear(2*self.h, embed_size)
+    # self.ff_up_q = torch.nn.Sequential(
+    #  torch.nn.Linear(2*self.h, embed_size//2),
+    #  torch.nn.ReLU(),
+    #  torch.nn.Linear(embed_size//2, embed_size),
+    #  torch.nn.ReLU(),
+    # )
+    # self.ff_down = torch.nn.Linear(embed_size, 1) # TODO remove
     encoder_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,
       nhead=num_heads,
@@ -101,30 +119,6 @@ class PredictionModel(torch.nn.Module):
     return qubit_matrix
   
 
-  def _get_prev_cores_one_hot(self, prev_core_allocs: torch.Tensor, C: int) -> torch.Tensor:
-    # Detect batch items that do not have previous core (all items are set to n_cores)
-    has_prev_core = (prev_core_allocs != C).any(dim=-1)
-    # Transform prev_core_allocs of size [B,Q] with items in the range 0:C to a one hot version of
-    # size [B,C,Q] with a 1 in position (b,c,q) if in prev_core_allocs[b,q] == c, 0 otherwise
-    prev_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
-      prev_core_allocs,
-      num_classes=C+1,
-    ).permute(0,2,1) # [B,C+1,Q]
-    # Discard core C (no previous core assigned) and fill cores without previous assignment with 1
-    prev_c_allocs_sparse = prev_c_allocs_sparse[:,:-1,:]
-    prev_c_allocs_sparse[~has_prev_core,:,:] = 1
-    return prev_c_allocs_sparse
-
-
-  def _get_curr_cores_one_hot(self, current_core_allocs: torch.Tensor, C: int) -> torch.Tensor:
-    curr_c_allocs_sparse = torch.nn.functional.one_hot( # [B,Q,C+1]
-      current_core_allocs,
-      num_classes=C+1,
-    ).permute(0,2,1) # [B,C+1,Q]
-    curr_c_allocs_sparse = curr_c_allocs_sparse[:,:-1,:] # [B,C,Q]
-    return curr_c_allocs_sparse
-  
-
   def _get_core_caps(
     self,
     core_capacities: torch.Tensor,
@@ -144,15 +138,15 @@ class PredictionModel(torch.nn.Module):
     core_capacities: torch.Tensor,
     core_connectivity: torch.Tensor,
     Q: int,
-    C: int,
   ) -> torch.Tensor:
-    has_prev_core = (prev_core_allocs != C).any(dim=-1)
+    has_prev_core = (prev_core_allocs != 0).any(dim=-1).any(dim=-1)
     swap_cost = torch.zeros_like(core_capacities, dtype=torch.float) # [B,C]
-    prev_cores = prev_core_allocs[has_prev_core,qubits[has_prev_core,0]] # [B]
+    prev_core_num = torch.argmax(prev_core_allocs, dim=1)
+    prev_cores = prev_core_num[has_prev_core,qubits[has_prev_core,0]] # [B]
     swap_cost[has_prev_core] = core_connectivity[prev_cores] # [B,C]
     # For double qubit allocs, compute the cost of allocation of the second
     double_qubits = (qubits[:,1] != -1) & has_prev_core
-    prev_cores = prev_core_allocs[double_qubits,qubits[double_qubits,1].flatten()]
+    prev_cores = prev_core_num[double_qubits,qubits[double_qubits,1].flatten()]
     swap_cost[double_qubits] += core_connectivity[prev_cores,:]
     swap_cost = 1/(swap_cost + 1)
     swap_cost = swap_cost.unsqueeze(-1).expand(-1,-1,Q) # [B,C,Q]
@@ -161,26 +155,10 @@ class PredictionModel(torch.nn.Module):
 
   def _get_core_attraction(
     self,
-    C: int,
     circuit_embs: torch.Tensor,
     prev_core: torch.Tensor,
   ):
-    # Expand prev_core for comparison: (B, 1, Q)
-    # Compare against all possible core indices (C,):
-    core_ids = torch.arange(C, device=prev_core.device).view(1, C, 1)  # [1,C,1]
-    prev_core_expanded = prev_core.unsqueeze(1)                        # [B,1,Q]
-    # Create mask: True where prev_core[b, q'] == c
-    mask = (prev_core_expanded == core_ids)                            # [B,C,Q]
-    # Use mask to sum over qb dimension, expand circuit_embs for broadcasting: (B, 1, Q, Q)
-    weighted = circuit_embs.unsqueeze(1) * mask.unsqueeze(-2)          # [B,C,Q,Q]
-    affinities = weighted.sum(dim=-1)                                  # [B, C, Q]
-    # Normalize
-    orig_shape = affinities.shape
-    affinities = affinities.reshape(prev_core.shape[0], -1)
-    maximums = torch.max(affinities, dim=-1).values
-    mask = (maximums != 0)
-    affinities[mask] /= maximums[mask].unsqueeze(-1)
-    return affinities.reshape(orig_shape)
+    return torch.bmm(prev_core, circuit_embs)
 
 
   def _format_circuit_data(
@@ -211,21 +189,18 @@ class PredictionModel(torch.nn.Module):
     next_interactions: torch.Tensor,
   ) -> torch.Tensor:
     (B,C) = core_capacities.shape
-    (B,Q) = current_core_allocs.shape
+    (B,C,Q) = current_core_allocs.shape
     device = qubits.device
     qubit_matrix = self._get_qs(qubits, C, Q, device)
-    prev_core = self._get_prev_cores_one_hot(prev_core_allocs, C)
-    curr_core = self._get_curr_cores_one_hot(current_core_allocs, C)
     core_caps = self._get_core_caps(core_capacities, Q, device)
-    core_cost = self._get_core_cost(
-      qubits, prev_core_allocs, core_capacities, core_connectivity, Q, C)
-    core_attraction = self._get_core_attraction(C, circuit_emb, prev_core_allocs)
+    core_cost = self._get_core_cost(qubits, prev_core_allocs, core_capacities, core_connectivity, Q)
+    core_attraction = self._get_core_attraction(circuit_emb, prev_core_allocs)
     ce_q0, ce_q1 = self._format_circuit_data(circuit_emb, qubits, C)
     ni_q0, ni_q1 = self._format_circuit_data(next_interactions, qubits, C)
     return torch.cat([
       qubit_matrix.unsqueeze(-1),
-      prev_core.unsqueeze(-1),
-      curr_core.unsqueeze(-1),
+      prev_core_allocs.unsqueeze(-1),
+      current_core_allocs.unsqueeze(-1),
       core_caps.unsqueeze(-1),
       core_cost.unsqueeze(-1),
       core_attraction.unsqueeze(-1),
@@ -264,21 +239,26 @@ class PredictionModel(torch.nn.Module):
     q_embs = self.ff_up_q(
       q_inputs.reshape(B*C,2*self.h) # [b*C,h]
     ).reshape(B,C,-1) # [b,C,H]
-
-    return key_embs, q_embs
+    proj_embs = self.ff_proj_q(
+      q_inputs.reshape(B*C,2*self.h) # [B*C,h]
+    ).reshape(B,C,-1) # [B*C,H]
+    # proj_embs = q_embs
+    return key_embs, q_embs, proj_embs
   
   def _project(
     self,
     key_embs: torch.Tensor,
     q_embs: torch.Tensor,
+    proj_embs: torch.Tensor,
   ) -> torch.Tensor:
     (B,C,Q,H) = key_embs.shape
-    # Run transformer with all cores batched so that the qubits attend among each other
+        # Run transformer with all cores batched so that the qubits attend among each other
     key_embs = self.key_transf(key_embs.reshape(B*C,Q,-1)) # [B*C,Q,H]
     # Now run MHA to get a single per core embedding
     core_embs, _ = self.mha(q_embs.reshape(B*C,1,H), key_embs, key_embs) # [B*C,2,H]
     core_embs = self.core_transf(core_embs.reshape(B,C,H)) # [B,C,H]
-    core_logits = self.ff_down(core_embs.reshape(B*C,H))   # [B*C,1]
+    # core_logits = self.ff_down(core_embs) # TODO remove
+    core_logits = (core_embs.reshape(B,C,H) * proj_embs).sum(dim=2) # [B*C,1]
     return core_logits.reshape(B,C)
 
 
@@ -328,8 +308,8 @@ class PredictionModel(torch.nn.Module):
       circuit_emb,
       next_interactions,
     )
-    key_embs, q_embs = self._get_embeddings(inputs, qubits)
-    logits = self._project(key_embs, q_embs) # [B,C]
+    key_embs, q_embs, proj_embs = self._get_embeddings(inputs, qubits)
+    logits = self._project(key_embs, q_embs, proj_embs) # [B,C]
     vals = torch.tensor([[0.4] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:
