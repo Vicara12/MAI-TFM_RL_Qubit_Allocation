@@ -97,7 +97,11 @@ def train_model_da(allocator, name: str):
   train_cfg = DirectAllocator.TrainConfig(
     train_iters=3_000,
     batch_size=1,
-    group_size=128,
+    group_size=32*3*3,
+    n_workers=9,
+    ett=64,
+    worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],
+    train_device='cuda:1',
     validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
@@ -105,14 +109,11 @@ def train_model_da(allocator, name: str):
     initial_noise=0.2,
     noise_decrease_factor=0.997,
     min_noise=0.0,
-    circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
-      (0.4, RandomCircuit(     num_lq=24, num_slices=lambda: randint(8,12), reflow=0.5)),
-      (0.6, RealCircuit(       num_lq=24, max_slices=8)),
-    ]),
+    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,64)),
     lr=5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
-    hardware_sampler=HardwareSampler(max_nqubits=16, range_ncores=[2,8]),
+    hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
     dropout=0.05,
   )
   allocator.train(train_cfg)
@@ -246,8 +247,8 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   allocator = DirectAllocator(
     device='cuda',
-    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
-    mode=DirectAllocator.Mode.Sequential,
+    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+    mode=DirectAllocator.Mode.Parallel,
   )
   train_model_da(allocator, name="da")
 

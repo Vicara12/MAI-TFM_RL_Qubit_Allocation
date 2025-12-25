@@ -52,3 +52,21 @@ and install a wheel that does not contain cuda via
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
+
+
+# Training the model
+
+To properly parallelize training across multiple workers run this command
+before executing the python script
+```bash
+nvidia-cuda-mps-control -d
+```
+and when you're done run
+```bash
+echo quit | nvidia-cuda-mps-control
+```
+
+If using a large group size you might also need to execute
+```bash
+ulimit -n 4096
+```

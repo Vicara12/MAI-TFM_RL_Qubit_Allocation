@@ -1,12 +1,12 @@
 import os
 import json
 import torch
-import gc
+import torch.multiprocessing as tmp
 import warnings
+from math import ceil
 from enum import Enum
-from time import time
+from time import time, sleep
 from typing import Self, Tuple, Optional, Any
-from copy import deepcopy
 from dataclasses import dataclass, asdict
 from utils.customtypes import Circuit, Hardware
 from utils.allocutils import sol_cost, get_all_checkpoints
@@ -38,6 +38,10 @@ class DirectAllocator:
     train_iters: int
     batch_size: int
     group_size: int
+    n_workers: int
+    worker_devices: list[str]
+    train_device: str
+    ett: int # Take n circuits from the extremes of group to train
     validate_each: int
     validation_hardware: Hardware
     validation_circuits: list[Circuit]
@@ -212,7 +216,7 @@ class DirectAllocator:
     hardware: Hardware,
     ret_train_data: bool,
     verbose: bool = False,
-  ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+  ) -> Optional[dict[str, torch.Tensor]]:
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -222,7 +226,10 @@ class DirectAllocator:
     prev_core_allocs = None
     core_caps = None
     if ret_train_data:
-      all_probs = []
+      all_qubits = []
+      all_actions = []
+      all_slices = []
+      all_log_probs = []
       all_valid = []
     prev_slice = -1
     for step, (slice_idx, qubit0, qubit1, _) in enumerate(alloc_steps):
@@ -259,7 +266,10 @@ class DirectAllocator:
         allocations[slice_idx,qubit1] = action
         core_allocs[action, qubit1] = 1
       if ret_train_data:
-        all_probs.append(log_pol[action])
+        all_qubits.append((qubit0, qubit1))
+        all_actions.append(action)
+        all_slices.append(slice_idx)
+        all_log_probs.append(log_pol[action].item())
         all_valid.append(valid)
       if cfg.mask_invalid:
         core_caps[action] = core_caps[action] - n_qubits
@@ -270,7 +280,13 @@ class DirectAllocator:
     if verbose:
       print('\033[2K\r', end='')
     if ret_train_data:
-      return torch.stack(all_probs), torch.tensor(all_valid)
+      return dict(
+        all_qubits = torch.tensor(all_qubits),
+        all_actions = torch.tensor(all_actions),
+        all_slices = torch.tensor(all_slices),
+        all_log_probs = torch.tensor(all_log_probs),
+        all_valid = torch.tensor(all_valid),
+      )
 
 
   def _allocate_parallel(
@@ -283,7 +299,7 @@ class DirectAllocator:
     hardware: Hardware,
     ret_train_data: bool,
     verbose: bool = False,
-  ) -> Optional[torch.Tensor]:
+  ) -> Optional[dict[str, torch.Tensor]]:
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -293,6 +309,9 @@ class DirectAllocator:
     prev_core_allocs = None
     core_caps = None
     if ret_train_data:
+      all_qubits = []
+      all_actions = []
+      all_slices = []
       all_log_probs = []
       all_valid = []
       
@@ -331,7 +350,10 @@ class DirectAllocator:
         allocations[slice_idx,paired_qubits[qubit_set][1]] = core
         core_allocs[core, paired_qubits[qubit_set][1]] = 1
         if ret_train_data:
-          all_log_probs.append(log_pol[qubit_set, core])
+          all_qubits.append((paired_qubits[qubit_set][0], paired_qubits[qubit_set][1]))
+          all_actions.append(core)
+          all_slices.append(slice_idx)
+          all_log_probs.append(log_pol[qubit_set, core].item())
           all_valid.append(valid)
         core_caps[core] -= 2
         if cfg.mask_invalid:
@@ -365,7 +387,10 @@ class DirectAllocator:
         allocations[slice_idx,free_qubits[qubit_set]] = core
         core_allocs[core, free_qubits[qubit_set]] = 1
         if ret_train_data:
-          all_log_probs.append(log_pol[qubit_set, core])
+          all_qubits.append((free_qubits[qubit_set], -1))
+          all_actions.append(core)
+          all_slices.append(slice_idx)
+          all_log_probs.append(log_pol[qubit_set, core].item())
           all_valid.append(valid)
         core_caps[core] -= 1
         if cfg.mask_invalid:
@@ -376,8 +401,14 @@ class DirectAllocator:
     if verbose:
       print('\033[2K\r', end='')
     if ret_train_data:
-      return torch.stack(all_log_probs), torch.tensor(all_valid)
-  
+      return dict(
+        all_qubits = torch.tensor(all_qubits),
+        all_actions = torch.tensor(all_actions),
+        all_slices = torch.tensor(all_slices),
+        all_log_probs = torch.tensor(all_log_probs),
+        all_valid = torch.tensor(all_valid),
+      )
+
 
   def _allocate(
     self,
@@ -387,7 +418,7 @@ class DirectAllocator:
     hardware: Hardware,
     ret_train_data: bool,
     verbose: bool = False
-  ):
+  ) -> Optional[dict[str, torch.Tensor]]:
     if self.mode == DirectAllocator.Mode.Sequential:
       return self._allocate_sequential(
         allocations=allocations,
@@ -436,23 +467,41 @@ class DirectAllocator:
     )
     cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
     return allocations, cost
+  
 
-
-  def _update_best(
+  def optimize_mult(
     self,
-    val_cost: torch.Tensor,
-    save_path:str,
-    it: int,
+    circuits: list[Circuit],
+    hardware: Hardware,
+    n_workers: int,
+    devices: list[str],
+    cfg: DAConfig = DAConfig(),
   ):
-    vc_mean=val_cost.mean().item()
-    chkpt_name = f"checkpt_{it+1}_{int(vc_mean*1000)}.pt"
-    torch.save(self.pred_model.state_dict(), os.path.join(save_path, chkpt_name))
-    best_model = dict(
-      val_cost=val_cost,
-      vc_mean=vc_mean,
+    all_data = self._launch_opt_workers(
+      opt_cfg=cfg,
+      n_workers=n_workers,
+      opt_devices=devices,
+      circuits=circuits,
+      hardware=hardware,
+      ret_train_data=False,
     )
-    print(f"saving as {chkpt_name}")
-    return best_model
+    return [(all_data[i]['allocations'], all_data[i]['cost']) for i in range(len(circuits))]
+
+
+  def _train_cfg_to_dict(self, train_cfg: TrainConfig) -> dict:
+    d = {}
+    for k,v in asdict(train_cfg).items():
+      try:
+        d[k] = float(v)
+        continue
+      except:
+        pass
+      try:
+        d[k] = str(v)
+        continue
+      except:
+        pass
+    return d
 
 
   def train(
@@ -461,6 +510,10 @@ class DirectAllocator:
   ) -> dict[str, list]:
     self.iter_timer = Timer.get("_train_iter_timer")
     self.iter_timer.reset()
+    tmp.set_start_method('spawn', force=True)
+    # For some reason I need to send the model through CPU first otherwise parameters get filled with 0
+    self.pred_model.cpu()
+    self.pred_model.to(train_cfg.train_device)
     optimizer = torch.optim.Adam(self.pred_model.parameters(), lr=train_cfg.lr)
     opt_cfg = DAConfig(
       noise=train_cfg.initial_noise,
@@ -468,23 +521,7 @@ class DirectAllocator:
       greedy=False,
     )
     data_log = dict(
-      train_cfg = dict(
-        inference_mode=str(self.mode),
-        train_iters=train_cfg.train_iters,
-        batch_size=train_cfg.batch_size,
-        group_size=train_cfg.group_size,
-        validate_each=train_cfg.validate_each,
-        initial_noise=train_cfg.initial_noise,
-        noise_decrease_factor=train_cfg.noise_decrease_factor,
-        lr=train_cfg.lr,
-        inv_mov_penalization=train_cfg.inv_mov_penalization,
-        hws_nqubits=train_cfg.hardware_sampler.max_nqubits,
-        hws_range_ncores=train_cfg.hardware_sampler.range_ncores,
-        min_noise=train_cfg.min_noise,
-        mask_invalid=train_cfg.mask_invalid,
-        dropout=train_cfg.dropout,
-        allocator=str(train_cfg.circ_sampler)
-      ),
+      train_cfg = self._train_cfg_to_dict(train_cfg),
       val_cost = [],
       loss = [],
       cost_loss = [],
@@ -493,11 +530,14 @@ class DirectAllocator:
       vm=[],
       t = []
     )
+    assert (train_cfg.group_size%train_cfg.n_workers == 0), f"n_workers must divide group_size"
+    assert (train_cfg.group_size%train_cfg.batch_size == 0), f"batch_size must divide group_size"
     self.pred_model.set_dropout(train_cfg.dropout)
     init_t = time()
     best_model = dict(val_cost=None, vc_mean=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
 
+    last_param = next(self.pred_model.parameters()).clone()
     try:
       for it in range(train_cfg.train_iters):
         # Train
@@ -513,36 +553,15 @@ class DirectAllocator:
 
         # Validate
         if (it+1)%train_cfg.validate_each == 0:
-          print(f"\033[2K\r      Running validation...", end='')
-          with torch.no_grad():
-            val_cost = self._validation(train_cfg=train_cfg)
-          vc_mean = val_cost.mean().item()
-          data_log['val_cost'].append(vc_mean)
-          print(f"\033[2K\r      vc={vc_mean:.4f}, ", end='')
-          if best_model['val_cost'] is None:
-            best_model = self._update_best(val_cost, save_path, it)
-          else:
-            p = ttest_ind(val_cost.numpy(), best_model['val_cost'].numpy(), equal_var=False)[1]
-            if p < 0.2:
-              if vc_mean < best_model['vc_mean']:
-                print(f"better than prev {best_model['vc_mean']:.4f} with p={p:.3f}, updating and ", end='')
-                best_model = self._update_best(val_cost, save_path, it)
-              else:
-                print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
-                self._update_best(val_cost, save_path, it)
-            else:
-              print(f"not enough significance wrt prev={best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
-              self._update_best(val_cost, save_path, it)
-          with open(os.path.join(save_path, "train_data.json"), "w") as f:
-            json.dump(data_log, f, indent=2)
+          best_model = self._validation(pheader, data_log, save_path, train_cfg, it, best_model)
 
         self.iter_timer.stop()
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - it - 1)
 
         print((
-          f"{pheader} l={loss:.1f} (c={cost_loss:.1f} v={val_loss:.1f}) \t n={opt_cfg.noise:.3f} "
-          f"vm={vm_ratio:.2f} t={self.iter_timer.time:.2f}s "
-          f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left) "
+          f"{pheader} l={loss:.4f} (c={cost_loss:.4f} v={val_loss:.4f}) \t n={opt_cfg.noise:.3f} "
+          f"vm={vm_ratio:.3f} t={self.iter_timer.time:.2f}s "
+          f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} left) "
           f"ram={get_ram_usage():.2f}GB"
         ))
         
@@ -557,10 +576,141 @@ class DirectAllocator:
     except KeyboardInterrupt as e:
       if 'y' not in input('\nGraceful shutdown? [y/n]: ').lower():
         raise e
+    self.pred_model
     torch.save(self.pred_model.state_dict(), os.path.join(save_path, "pred_mod.pt"))
     with open(os.path.join(save_path, "train_data.json"), "w") as f:
       json.dump(data_log, f, indent=2)
   
+
+  def _opt_parallel_worker(
+    self,
+    n: int,
+    device: str,
+    circuits: list[Circuit],
+    cfg: DAConfig,
+    hardware: Hardware,
+    data_queue: tmp.Queue,
+    ret_train_data: bool,
+  ):
+    self.pred_model.cpu()
+    self.pred_model.to(device)
+    with torch.no_grad():
+      for i, circuit in enumerate(circuits):
+        allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
+        train_data = self._allocate(
+          allocations=allocations,
+          circuit=circuit,
+          cfg=cfg,
+          hardware=hardware,
+          ret_train_data=ret_train_data,
+          verbose=False,
+        )
+        cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
+        opt_metadata = {'opt_n': n + i, 'cost': cost, 'allocations': allocations}
+        while data_queue.qsize() > 2:
+          sleep(0.5)
+        data_queue.put(opt_metadata | (train_data if train_data is not None else {}))
+    # Wait until parent reads data and sends terminate signal
+    while True:
+      sleep(10)
+  
+
+  def _launch_opt_workers(
+    self,
+    opt_cfg: DAConfig,
+    n_workers: int,
+    opt_devices: list[str],
+    circuits: list[Circuit],
+    hardware: Hardware,
+    ret_train_data: bool,
+  ) -> dict[int, Any]:
+    data_queue = tmp.Queue()
+    workers = []
+    data = {}
+    n_per_worker = ceil(len(circuits)/n_workers)
+    try:
+      for i in range(n_workers):
+        p = tmp.Process(
+          target=self._opt_parallel_worker,
+          args=(
+            i*n_per_worker,
+            opt_devices[i%len(opt_devices)],
+            circuits[i*n_per_worker:(i + 1)*n_per_worker],
+            opt_cfg,
+            hardware,
+            data_queue,
+            ret_train_data,
+          ),
+        )
+        p.start()
+        workers.append(p)
+      while len(data) < len(circuits):
+        if any(not p.is_alive() for p in workers):
+          raise Exception("some worked as failed")
+        while not data_queue.empty():
+          dq_item = data_queue.get()
+          idx = dq_item['opt_n']
+          del dq_item['opt_n']
+          data[idx] = dq_item
+        sleep(0.1)
+    finally:
+      for worker in workers:
+        worker.terminate()
+    return data
+
+
+  def _rebuild_core_info_worker(
+    self,
+    hardware: Hardware,
+    data: dict[int, Any],
+    data_queue: tmp.Queue
+  ):
+    for k,v in data.items():
+      core_info = {
+        'sample': k,
+        'prev_core_allocs': [],
+        'current_core_allocs': [],
+        'core_capacities': [],
+      }
+      current_core_allocs = torch.zeros([hardware.n_cores, hardware.n_qubits])
+      prev_core_allocs = None
+      core_capacities = None
+      prev_slice_i = -1
+
+      for ((q0,q1), core, slice_i) in zip(v['all_qubits'], v['all_actions'], v['all_slices']):
+        if slice_i != prev_slice_i:
+          prev_core_allocs = current_core_allocs
+          current_core_allocs = torch.zeros_like(current_core_allocs)
+          core_capacities = hardware.core_capacities.clone()
+          prev_slice_i = slice_i
+        core_info['prev_core_allocs'].append(prev_core_allocs)
+        core_info['current_core_allocs'].append(current_core_allocs)
+        core_info['core_capacities'].append(core_capacities)
+        current_core_allocs = current_core_allocs.clone()
+        core_capacities = core_capacities.clone()
+        current_core_allocs[core, q0] = 1
+        core_capacities[core] -= 1
+        if q1 != -1:
+          current_core_allocs[core, q1] = 1
+          core_capacities[core] -= 1
+        core_capacities[core] = max(core_capacities[core], 0)
+      core_info['prev_core_allocs'] = torch.stack(core_info['prev_core_allocs'])
+      core_info['current_core_allocs'] = torch.stack(core_info['current_core_allocs'])
+      core_info['core_capacities'] = torch.stack(core_info['core_capacities'])
+      data_queue.put(core_info)
+    # Wait until parent finishes and calls terminate on process
+    while True:
+      sleep(10)
+
+  def _rebuild_core_info(
+    self,
+    hardware: Hardware,
+    data: dict[int, Any]
+  ) -> tuple[tmp.Process, tmp.Queue]:
+    data_queue = tmp.Queue()
+    p = tmp.Process(target=self._rebuild_core_info_worker, args=(hardware, data, data_queue))
+    p.start()
+    return p, data_queue
 
   def _train_batch(
     self,
@@ -569,78 +719,125 @@ class DirectAllocator:
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
   ) -> float:
+    # Sample hardware and circuit and optimize groups size times
+    hardware = train_cfg.hardware_sampler.sample()
+    train_cfg.circ_sampler.num_lq = hardware.n_qubits
+    circuit = train_cfg.circ_sampler.sample()
+    self.pred_model.eval()
+    print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {train_cfg.group_size} circuits...", end='')
+    all_data = self._launch_opt_workers(
+      opt_cfg=opt_cfg,
+      n_workers=train_cfg.n_workers,
+      opt_devices=train_cfg.worker_devices,
+      circuits=[circuit]*train_cfg.group_size,
+      hardware=hardware,
+      ret_train_data=True,
+    )
+
+    # Normalize costs by number of gates
+    for k in all_data.keys():
+      all_data[k]['cost'] /= (circuit.n_gates_norm + 1)
+
+    # Normalize cost vector and select 16 best and worst samples
+    overcost = torch.tensor([v['cost'] for v in all_data.values()])
+    overcost = (overcost - overcost.mean().item()) / (overcost.std(unbiased=True) + 1e-8)
+    sorted_keys = sorted(zip(overcost.tolist(), all_data.keys()))
+    sorted_keys = list(map(lambda x: x[1], sorted_keys))
+    ett = train_cfg.ett
+    # Take only ett//2 top and worst samples from group to train
+    sorted_keys = sorted_keys if len(sorted_keys) < ett else sorted_keys[:ett//2] + sorted_keys[-ett//2:]
+    assert (len(sorted_keys)%train_cfg.batch_size == 0), 'batch_size does not divide min(group_size, ett)'
+    all_data = {k:v for k,v in all_data.items() if k in sorted_keys}
+
+    # Use gathered data to train model
+    print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Training model...", end='')
     self.pred_model.train()
-    n_total = train_cfg.batch_size*train_cfg.group_size
+    core_con = hardware.core_connectivity.to(train_cfg.train_device)
+    slices = next(iter(all_data.values()))['all_slices']
+    ce = circuit.embedding[slices].to(train_cfg.train_device)
+    ni = circuit.next_interaction[slices].to(train_cfg.train_device)
+    total_cost_loss = 0
+    total_vm_loss = 0
+    total_loss = 0
+    vm_ratio = 0
     inv_pen = train_cfg.inv_mov_penalization
-
-    while True:
-      total_loss = 0
-      total_cost_loss = 0
-      total_valid_loss = 0
-      valid_moves_ratio = 0
+    p, data_queue = self._rebuild_core_info(hardware, all_data)
+    try:
       optimizer.zero_grad()
-      try:
-        # with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-        for batch_i in range(train_cfg.batch_size):
-          hardware = train_cfg.hardware_sampler.sample()
-          train_cfg.circ_sampler.num_lq = hardware.n_qubits
-          circuit = train_cfg.circ_sampler.sample()
-          all_costs = torch.empty([train_cfg.group_size], device=self.device)
-          action_log_probs = torch.empty([train_cfg.group_size], device=self.device)
-          inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
+      for _ in range(len(all_data)):
+        while data_queue.empty():
+          if not p.is_alive():
+            raise Exception('core info rebuilt process has died')
+          sleep(0.1)
+        core_info = data_queue.get()
+        data_i = all_data[core_info['sample']]
+        _, _, log_probs = self.pred_model(
+          qubits=data_i['all_qubits'].to(train_cfg.train_device),
+          prev_core_allocs=core_info['prev_core_allocs'].to(train_cfg.train_device),
+          current_core_allocs=core_info['current_core_allocs'].to(train_cfg.train_device),
+          core_capacities=core_info['core_capacities'].to(train_cfg.train_device),
+          core_connectivity=core_con,
+          circuit_emb=ce,
+          next_interactions=ni,
+        )
+        actions = data_i['all_actions'].to(train_cfg.train_device)
+        log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+        valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
+        avg_n = len(log_probs) * len(all_data)
+        cost_loss = torch.sum(overcost[core_info['sample']]*log_probs[valid_mvs])/avg_n
+        vm_loss = torch.sum(log_probs[~valid_mvs])/avg_n
+        loss = ((1 - inv_pen) * cost_loss + inv_pen * vm_loss)
+        loss.backward()
+        total_cost_loss += cost_loss.item()
+        total_vm_loss += vm_loss.item()
+        total_loss += loss.item()
+        vm_ratio += valid_mvs.float().mean().item()/train_cfg.group_size
+      torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
+      optimizer.step()
+    finally:
+      p.terminate()
 
-          for group_i in range(train_cfg.group_size):
-            opt_n = group_i + batch_i*train_cfg.group_size
-            print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
-            allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-            log_probs, valid_moves = self._allocate(
-              allocations=allocations,
-              circuit=circuit,
-              cfg=opt_cfg,
-              hardware=hardware,
-              ret_train_data=True,
-            )
-            cost = sol_cost(allocations=allocations.detach(), core_con=hardware.core_connectivity)
-            all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
-            action_log_probs[group_i] = torch.sum(log_probs[valid_moves.detach()])
-            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves.detach()])
-            valid_moves_ratio += valid_moves.float().mean().item()
-
-          all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-          cost_loss = torch.sum(all_costs*action_log_probs)
-          total_cost_loss += cost_loss.item()
-          valid_loss = torch.sum(inv_moves_sum)
-          total_valid_loss += valid_loss.item()
-          loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
-          loss.backward()
-          total_loss += loss.item()
-          del circuit
-          del hardware
-          del cost_loss
-          del valid_loss
-          del loss
-        torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
-        optimizer.step()
-        break
-      except torch.cuda.OutOfMemoryError:
-        print(" Ran out of VRAM! Retrying...")
-        if 'loss' in locals(): del loss
-        if 'cost_loss' in locals(): del cost_loss
-        if 'valid_loss' in locals(): del valid_loss
-        if 'action_log_probs' in locals(): del action_log_probs
-        if 'inv_moves_sum' in locals(): del inv_moves_sum
-        if 'log_probs' in locals(): del log_probs
-        if 'allocations' in locals(): del allocations
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-    return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
+    return total_loss, total_cost_loss, total_vm_loss, vm_ratio
   
 
-  def _validation(self, train_cfg: TrainConfig) -> float:
-    da_cfg = DAConfig()
-    norm_costs = torch.empty([len(train_cfg.validation_circuits)])
-    for i, circ in enumerate(train_cfg.validation_circuits):
-      norm_costs[i] = self.optimize(circ, cfg=da_cfg, hardware=train_cfg.validation_hardware)[1]/(circ.n_gates_norm + 1)
-    return norm_costs
+  def _validation(
+    self,
+    pheader: str,
+    data_log: dict[str, list],
+    save_path: str,
+    train_cfg: TrainConfig,
+    it: int,
+    best_model: dict,
+  ) -> float:
+    print(f"{pheader} Running validation...", end='')
+    circuits = train_cfg.validation_circuits
+    # Optimize validation circuits and normalize costs
+    all_res = self.optimize_mult(
+      circuits=circuits,
+      hardware=train_cfg.validation_hardware,
+      n_workers=train_cfg.n_workers,
+      devices=train_cfg.worker_devices,
+    )
+    val_cost = torch.tensor([res[1]/(c.n_gates_norm + 1) for res,c in zip(all_res, circuits)])
+    vc_mean = val_cost.mean().item()
+    data_log['val_cost'].append(vc_mean)
+    print(f"{pheader}     vc={vc_mean:.4f}, ", end='')
+    if best_model['val_cost'] is None:
+      best_model = dict(val_cost=val_cost, vc_mean=vc_mean)
+    else:
+      p = ttest_ind(val_cost.numpy(), best_model['val_cost'].numpy(), equal_var=False)[1]
+      if p < 0.2:
+        if vc_mean < best_model['vc_mean']:
+          print(f"better than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
+          best_model = dict(val_cost=val_cost, vc_mean=vc_mean)
+        else:
+          print(f"worse than prev {best_model['vc_mean']:.4f} with p={p:.3f}, ", end='')
+      else:
+        print(f"not enough significance wrt prev={best_model['vc_mean']:.4f} p={p:.3f}, ", end='')
+    # Save model checkpoint and validation data
+    chkpt_name = f"checkpt_{it+1}_{int(vc_mean*1000)}.pt"
+    print(f"saving as {chkpt_name}")
+    torch.save(self.pred_model.state_dict(), os.path.join(save_path, chkpt_name))
+    with open(os.path.join(save_path, "train_data.json"), "w") as f:
+      json.dump(data_log, f, indent=2)
+    return best_model
