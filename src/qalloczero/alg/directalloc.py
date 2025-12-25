@@ -485,7 +485,7 @@ class DirectAllocator:
       hardware=hardware,
       ret_train_data=False,
     )
-    return [(all_data[i]['allocations'], all_data[i]['cost']) for i in range(len(circuits))]
+    return [(item['allocations'], item['cost']) for item in all_data]
 
 
   def _train_cfg_to_dict(self, train_cfg: TrainConfig) -> dict:
@@ -623,7 +623,7 @@ class DirectAllocator:
     circuits: list[Circuit],
     hardware: Hardware,
     ret_train_data: bool,
-  ) -> dict[int, Any]:
+  ) -> list[dict]:
     data_queue = tmp.Queue()
     workers = []
     data = {}
@@ -656,16 +656,19 @@ class DirectAllocator:
     finally:
       for worker in workers:
         worker.terminate()
+    # Order by opt_n and return values as list
+    data = sorted(data.items())
+    data = list(map(lambda x: x[1], data))
     return data
 
 
   def _rebuild_core_info_worker(
     self,
     hardware: Hardware,
-    data: dict[int, Any],
+    data: list[dict],
     data_queue: tmp.Queue
   ):
-    for k,v in data.items():
+    for k,v in enumerate(data):
       core_info = {
         'sample': k,
         'prev_core_allocs': [],
@@ -705,7 +708,7 @@ class DirectAllocator:
   def _rebuild_core_info(
     self,
     hardware: Hardware,
-    data: dict[int, Any]
+    data: list[dict]
   ) -> tuple[tmp.Process, tmp.Queue]:
     data_queue = tmp.Queue()
     p = tmp.Process(target=self._rebuild_core_info_worker, args=(hardware, data, data_queue))
@@ -735,25 +738,23 @@ class DirectAllocator:
     )
 
     # Normalize costs by number of gates
-    for k in all_data.keys():
-      all_data[k]['cost'] /= (circuit.n_gates_norm + 1)
+    for i in range(len(all_data)):
+      all_data[i]['cost'] /= (circuit.n_gates_norm + 1)
 
     # Normalize cost vector and select 16 best and worst samples
-    overcost = torch.tensor([v['cost'] for v in all_data.values()])
+    overcost = torch.tensor([v['cost'] for v in all_data])
     overcost = (overcost - overcost.mean().item()) / (overcost.std(unbiased=True) + 1e-8)
-    sorted_keys = sorted(zip(overcost.tolist(), all_data.keys()))
-    sorted_keys = list(map(lambda x: x[1], sorted_keys))
+    all_data = [(item | {"overcost": ov.item()}) for item, ov in zip(all_data, overcost)]
+    all_data = sorted(all_data, key=lambda x: x['overcost'])
     ett = train_cfg.ett
     # Take only ett//2 top and worst samples from group to train
-    sorted_keys = sorted_keys if len(sorted_keys) < ett else sorted_keys[:ett//2] + sorted_keys[-ett//2:]
-    assert (len(sorted_keys)%train_cfg.batch_size == 0), 'batch_size does not divide min(group_size, ett)'
-    all_data = {k:v for k,v in all_data.items() if k in sorted_keys}
+    all_data = all_data if len(all_data) < ett else all_data[:ett//2] + all_data[-ett//2:]
 
     # Use gathered data to train model
     print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Training model...", end='')
     self.pred_model.train()
     core_con = hardware.core_connectivity.to(train_cfg.train_device)
-    slices = next(iter(all_data.values()))['all_slices']
+    slices = all_data[0]['all_slices']
     ce = circuit.embedding[slices].to(train_cfg.train_device)
     ni = circuit.next_interaction[slices].to(train_cfg.train_device)
     total_cost_loss = 0
@@ -784,7 +785,7 @@ class DirectAllocator:
         log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
         valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
         avg_n = len(log_probs) * len(all_data)
-        cost_loss = torch.sum(overcost[core_info['sample']]*log_probs[valid_mvs])/avg_n
+        cost_loss = torch.sum(data_i['overcost']*log_probs[valid_mvs])/avg_n
         vm_loss = torch.sum(log_probs[~valid_mvs])/avg_n
         loss = ((1 - inv_pen) * cost_loss + inv_pen * vm_loss)
         loss.backward()

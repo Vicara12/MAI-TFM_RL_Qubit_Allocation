@@ -99,7 +99,7 @@ def train_model_da(allocator, name: str):
     batch_size=1,
     group_size=32*3*3,
     n_workers=9,
-    ett=64,
+    ett=288,
     worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],
     train_device='cuda:1',
     validate_each=25,
