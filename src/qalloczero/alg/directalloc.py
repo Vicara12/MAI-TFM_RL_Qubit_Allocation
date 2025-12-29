@@ -792,7 +792,7 @@ class DirectAllocator:
         total_cost_loss += cost_loss.item()
         total_vm_loss += vm_loss.item()
         total_loss += loss.item()
-        vm_ratio += valid_mvs.float().mean().item()/train_cfg.group_size
+        vm_ratio += valid_mvs.float().mean().item()/len(all_data)
       torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
       optimizer.step()
     finally:
