@@ -99,7 +99,7 @@ def train_model_da(allocator, name: str):
     batch_size=8,
     group_size=16*3*3,
     train_circ_per_iter=16*8,
-    eps=0.2,
+    eps=50,
     n_workers=9,
     ett=32,
     worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],
@@ -133,11 +133,12 @@ def finetune_model_da(name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
+    # >>>>>> FINETUNNING <<<<<<<<<
     train_iters=3_000,
     batch_size=8,
     group_size=16*3*3,
     train_circ_per_iter=16*8,
-    eps=0.2,
+    eps=10,
     n_workers=9,
     ett=32,
     worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],

@@ -800,11 +800,11 @@ class DirectAllocator:
           avg_n = len(batch_data) * len(replay_buffer)
           ratios = torch.exp(log_probs - data_i['all_log_probs'].to(train_cfg.train_device))
           cost_loss = torch.mean(
-              data_i['overcost']*torch.clamp(ratios[valid_mvs], 1.0 - train_cfg.eps, 1.0 + train_cfg.eps)
+              data_i['overcost']*torch.clamp(ratios[valid_mvs], min=None, max=train_cfg.eps)
           ) / avg_n
           if (~valid_mvs).any():
             vm_loss = torch.mean(
-                torch.clamp(ratios[~valid_mvs], min=None, max=1.0 + train_cfg.eps)
+                torch.clamp(ratios[~valid_mvs], min=None, max=train_cfg.eps)
             ) / avg_n
           else:
             vm_loss = torch.tensor(0.0, device=train_cfg.train_device)
