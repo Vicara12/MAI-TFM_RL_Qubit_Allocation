@@ -4,6 +4,7 @@ import torch
 import torch.multiprocessing as tmp
 import warnings
 import random
+import copy
 from math import ceil
 from enum import Enum
 from time import time, sleep
@@ -58,6 +59,51 @@ class DirectAllocator:
     hardware_sampler: HardwareSampler
     mask_invalid: bool
     dropout: float = 0.0
+  
+
+  class TrainDataGatherer:
+    def __init__(self, data_queue: tmp.Queue, processes: list[tmp.Process], n_items: int):
+      self.data_queue = data_queue
+      self.processes = processes
+      self.n_items = n_items
+    
+    def _finish_procs(self):
+      for proc in self.processes:
+        proc.terminate()
+      while not self.data_queue.empty():
+        self.data_queue.get()
+    
+    def __del__(self):
+      self._finish_procs()
+
+    @property
+    def finished(self) -> bool:
+      return self.data_queue.qsize() >= self.n_items
+    
+    @property
+    def healty(self) -> bool:
+      return all(map(lambda p: p.is_alive(), self.processes))
+
+    @property
+    def data(self) -> list:
+      if not self.healty:
+        raise Exception("some worker has failed")
+      if not self.finished:
+        raise Exception("gatherer has not finished")
+      items = [None]*self.n_items
+      while not self.data_queue.empty():
+        dq_item = self.data_queue.get()
+        idx = dq_item['opt_n']
+        if idx >= self.n_items:
+          raise Exception(f"found value outside gatherer range: {idx} >= {self.n_items}")
+        del dq_item['opt_n']
+        items[idx] = dq_item
+      self._finish_procs()
+      if any(map(lambda x: x is None, items)):
+        raise Exception("missing some value in gatherer result list")
+      return items
+
+    
 
 
   def __init__(
@@ -480,7 +526,7 @@ class DirectAllocator:
     devices: list[str],
     cfg: DAConfig = DAConfig(),
   ):
-    all_data = self._launch_opt_workers(
+    data_future = self._launch_opt_workers(
       opt_cfg=cfg,
       n_workers=n_workers,
       opt_devices=devices,
@@ -488,7 +534,9 @@ class DirectAllocator:
       hardware=hardware,
       ret_train_data=False,
     )
-    return [(item['allocations'], item['cost']) for item in all_data]
+    while not data_future.finished:
+      sleep(0.1)
+    return [(item['allocations'], item['cost']) for item in data_future.data]
 
 
   def _train_cfg_to_dict(self, train_cfg: TrainConfig) -> dict:
@@ -539,7 +587,7 @@ class DirectAllocator:
     init_t = time()
     best_model = dict(val_cost=None, vc_mean=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
-    replay_buffer = []
+    train_data = None
 
     try:
       for it in range(train_cfg.train_iters):
@@ -547,12 +595,12 @@ class DirectAllocator:
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
 
-        loss, cost_loss, val_loss, vm_ratio, replay_buffer = self._train_batch(
+        loss, cost_loss, val_loss, vm_ratio, train_data = self._train_batch(
           pheader=pheader,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
           train_cfg=train_cfg,
-          replay_buffer=replay_buffer,
+          train_data=train_data,
         )
 
         # Validate
@@ -627,14 +675,13 @@ class DirectAllocator:
     circuits: list[Circuit],
     hardware: Hardware,
     ret_train_data: bool,
-  ) -> list[dict]:
+  ) -> TrainDataGatherer:
     data_queue = tmp.Queue()
     workers = []
-    data = {}
     n_per_worker = ceil(len(circuits)/n_workers)
     try:
       for i in range(n_workers):
-        p = tmp.Process(
+        workers.append(tmp.Process(
           target=self._opt_parallel_worker,
           args=(
             i*n_per_worker,
@@ -645,25 +692,12 @@ class DirectAllocator:
             data_queue,
             ret_train_data,
           ),
-        )
-        p.start()
-        workers.append(p)
-      while len(data) < len(circuits):
-        if any(not p.is_alive() for p in workers):
-          raise Exception("some worked as failed")
-        while not data_queue.empty():
-          dq_item = data_queue.get()
-          idx = dq_item['opt_n']
-          del dq_item['opt_n']
-          data[idx] = dq_item
-        sleep(0.1)
+        ))
+        workers[-1].start()
     finally:
       for worker in workers:
         worker.terminate()
-    # Order by opt_n and return values as list
-    data = sorted(data.items())
-    data = list(map(lambda x: x[1], data))
-    return data
+    return DirectAllocator.TrainDataGatherer(data_queue, workers, len(circuits))
 
 
   def _rebuild_core_info_worker(
@@ -725,53 +759,51 @@ class DirectAllocator:
     optimizer: torch.optim.Optimizer,
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
-    replay_buffer: list[tuple[Circuit,Hardware,list]],
+    train_data: Optional[tuple[Hardware,Circuit,list[dict]]],
   ) -> float:
     # Sample hardware and circuit and optimize groups size times
-    hardware = train_cfg.hardware_sampler.sample()
-    train_cfg.circ_sampler.num_lq = hardware.n_qubits
-    circuit = train_cfg.circ_sampler.sample()
+    next_hardware = train_cfg.hardware_sampler.sample()
+    train_cfg.circ_sampler.num_lq = next_hardware.n_qubits
+    next_circuit = train_cfg.circ_sampler.sample()
+    # Execute workers with a clone of pred model so that we can update the main one
+    self.pred_model, p_model_backup = copy.deepcopy(self.pred_model), self.pred_model
     self.pred_model.eval()
-    print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {train_cfg.group_size} circuits...", end='')
-    batch_data = self._launch_opt_workers(
+    print(f"{pheader} ns={next_circuit.n_slices} nq={next_hardware.n_qubits} nc={next_hardware.n_cores} Optimizing {train_cfg.group_size} circuits...", end='')
+    next_train_data_future = self._launch_opt_workers(
       opt_cfg=opt_cfg,
       n_workers=train_cfg.n_workers,
       opt_devices=train_cfg.worker_devices,
-      circuits=[circuit]*train_cfg.group_size,
-      hardware=hardware,
+      circuits=[next_circuit]*train_cfg.group_size,
+      hardware=next_hardware,
       ret_train_data=True,
     )
+    self.pred_model = p_model_backup
 
-    # Normalize costs by number of gates
-    for i in range(len(batch_data)):
-      batch_data[i]['cost'] /= (circuit.n_gates_norm + 1)
+    if train_data is not None:
+      hardware, circuit, batch_data = train_data
+      # Normalize costs by number of gates
+      for i in range(len(batch_data)):
+        batch_data[i]['cost'] /= (circuit.n_gates_norm + 1)
 
-    # Normalize cost vector and select 16 best and worst samples
-    overcost = torch.tensor([v['cost'] for v in batch_data])
-    overcost = (overcost - overcost.mean().item()) / (overcost.std(unbiased=True) + 1e-2)
-    # Clamp more upwards because it's very easy to mess cost up badly but difficult to improve it
-    overcost = torch.clamp(overcost, -5.0, 2.0)
-    batch_data = [(item | {"overcost": ov.item()}) for item, ov in zip(batch_data, overcost)]
-    batch_data = sorted(batch_data, key=lambda x: x['overcost'])
-    ett = train_cfg.ett
-    # Take only ett//2 top and worst samples from group to train
-    batch_data = batch_data if len(batch_data) < ett else batch_data[:ett//2] + batch_data[-ett//2:]
-    replay_buffer.append((circuit, hardware, batch_data))
-    replay_buffer = replay_buffer[-train_cfg.batch_size:]
+      # Normalize cost vector and select 16 best and worst samples
+      overcost = torch.tensor([v['cost'] for v in batch_data])
+      overcost = (overcost - overcost.mean().item()) / torch.amax(overcost.std(unbiased=True), 0.01)
+      # Clamp more upwards because it's very easy to mess cost up badly but difficult to improve it
+      overcost = torch.clamp(overcost, -5.0, 2.0)
+      batch_data = [(item | {"overcost": ov.item()}) for item, ov in zip(batch_data, overcost)]
+      batch_data = sorted(batch_data, key=lambda x: x['overcost'])
+      ett = train_cfg.ett
+      # Take only ett//2 top and worst samples from group to train
+      batch_data = batch_data if len(batch_data) < ett else batch_data[:ett//2] + batch_data[-ett//2:]
 
-    # Use replay buffer data to train model
-    print(f"{pheader} Training model...", end='')
-    self.pred_model.train()
-    total_cost_loss = 0
-    total_vm_loss = 0
-    total_loss = 0
-    vm_ratio = 0
-    inv_pen = train_cfg.inv_mov_penalization
-    optimizer.zero_grad()
-    for (circuit, hardware, batch_data) in replay_buffer:
-      max_ncircs = train_cfg.train_circ_per_iter//train_cfg.batch_size
-      if len(batch_data) > max_ncircs:
-        batch_data = random.sample(batch_data, max_ncircs)
+      self.pred_model.train()
+      total_cost_loss = 0
+      total_vm_loss = 0
+      total_loss = 0
+      vm_ratio = 0
+      inv_pen = train_cfg.inv_mov_penalization
+      optimizer.zero_grad()
+
       core_con = hardware.core_connectivity.to(train_cfg.train_device)
       slices = batch_data[0]['all_slices']
       ce = circuit.embedding[slices].to(train_cfg.train_device)
@@ -797,17 +829,9 @@ class DirectAllocator:
           actions = data_i['all_actions'].to(train_cfg.train_device)
           log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
           valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
-          ratios = torch.exp(log_probs - data_i['all_log_probs'].to(train_cfg.train_device))
-          avg_n = len(batch_data) * len(replay_buffer) * len(ratios)
-          cost_loss = torch.sum(
-              data_i['overcost']*torch.clamp(ratios[valid_mvs], min=None, max=train_cfg.eps)
-          ) / avg_n
-          if (~valid_mvs).any():
-            vm_loss = torch.sum(
-                torch.clamp(ratios[~valid_mvs], min=None, max=train_cfg.eps)
-            ) / avg_n
-          else:
-            vm_loss = torch.tensor(0.0, device=train_cfg.train_device)
+          avg_n = len(batch_data) * len(actions)
+          cost_loss = torch.sum(data_i['overcost'] * log_probs[valid_mvs]) / avg_n
+          vm_loss = torch.sum(log_probs[~valid_mvs]) / avg_n
           loss = ((1 - inv_pen) * cost_loss + inv_pen * vm_loss)
           loss.backward()
           total_cost_loss += cost_loss.item()
@@ -816,10 +840,17 @@ class DirectAllocator:
           vm_ratio += valid_mvs.float().sum().item()/avg_n
       finally:
         p.terminate()
-    torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
-    optimizer.step()
+      torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
+      optimizer.step()
+    
+    while not next_train_data_future.finished:
+      if not next_train_data_future.healty:
+        raise Exception("some data gatherer worker has died")
+      sleep(0.1)
+    
+    train_data = tuple(next_hardware, next_circuit, next_train_data_future.data)
 
-    return total_loss, total_cost_loss, total_vm_loss, vm_ratio, replay_buffer
+    return total_loss, total_cost_loss, total_vm_loss, vm_ratio, train_data
   
 
   def _validation(
