@@ -38,10 +38,7 @@ class DirectAllocator:
   @dataclass
   class TrainConfig:
     train_iters: int
-    batch_size: int
     group_size: int
-    train_circ_per_iter: int
-    eps: float
     n_workers: int
     worker_devices: list[str]
     train_device: str
@@ -67,14 +64,14 @@ class DirectAllocator:
       self.processes = processes
       self.n_items = n_items
     
-    def _finish_procs(self):
+    def abort(self):
       for proc in self.processes:
         proc.terminate()
       while not self.data_queue.empty():
         self.data_queue.get()
     
     def __del__(self):
-      self._finish_procs()
+      self.abort()
 
     @property
     def finished(self) -> bool:
@@ -98,7 +95,7 @@ class DirectAllocator:
           raise Exception(f"found value outside gatherer range: {idx} >= {self.n_items}")
         del dq_item['opt_n']
         items[idx] = dq_item
-      self._finish_procs()
+      self.abort()
       if any(map(lambda x: x is None, items)):
         raise Exception("missing some value in gatherer result list")
       return items
@@ -582,7 +579,6 @@ class DirectAllocator:
       t = []
     )
     assert (train_cfg.group_size%train_cfg.n_workers == 0), f"n_workers must divide group_size"
-    assert (train_cfg.group_size%train_cfg.batch_size == 0), f"batch_size must divide group_size"
     self.pred_model.set_dropout(train_cfg.dropout)
     init_t = time()
     best_model = dict(val_cost=None, vc_mean=None)
@@ -659,8 +655,6 @@ class DirectAllocator:
         )
         cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
         opt_metadata = {'opt_n': n + i, 'cost': cost, 'allocations': allocations}
-        while data_queue.qsize() > 2:
-          sleep(0.5)
         data_queue.put(opt_metadata | (train_data if train_data is not None else {}))
     # Wait until parent reads data and sends terminate signal
     while True:
@@ -694,10 +688,11 @@ class DirectAllocator:
           ),
         ))
         workers[-1].start()
-    finally:
+      gatherer_obj = DirectAllocator.TrainDataGatherer(data_queue, workers, len(circuits))
+    except:
       for worker in workers:
         worker.terminate()
-    return DirectAllocator.TrainDataGatherer(data_queue, workers, len(circuits))
+    return gatherer_obj
 
 
   def _rebuild_core_info_worker(
@@ -779,6 +774,10 @@ class DirectAllocator:
     )
     self.pred_model = p_model_backup
 
+    total_cost_loss = 0
+    total_vm_loss = 0
+    total_loss = 0
+    vm_ratio = 0
     if train_data is not None:
       hardware, circuit, batch_data = train_data
       # Normalize costs by number of gates
@@ -787,7 +786,7 @@ class DirectAllocator:
 
       # Normalize cost vector and select 16 best and worst samples
       overcost = torch.tensor([v['cost'] for v in batch_data])
-      overcost = (overcost - overcost.mean().item()) / torch.amax(overcost.std(unbiased=True), 0.01)
+      overcost = (overcost - overcost.mean().item()) / max(overcost.std(unbiased=True), 1e-5)
       # Clamp more upwards because it's very easy to mess cost up badly but difficult to improve it
       overcost = torch.clamp(overcost, -5.0, 2.0)
       batch_data = [(item | {"overcost": ov.item()}) for item, ov in zip(batch_data, overcost)]
@@ -797,10 +796,6 @@ class DirectAllocator:
       batch_data = batch_data if len(batch_data) < ett else batch_data[:ett//2] + batch_data[-ett//2:]
 
       self.pred_model.train()
-      total_cost_loss = 0
-      total_vm_loss = 0
-      total_loss = 0
-      vm_ratio = 0
       inv_pen = train_cfg.inv_mov_penalization
       optimizer.zero_grad()
 
@@ -810,6 +805,7 @@ class DirectAllocator:
       ni = circuit.next_interaction[slices].to(train_cfg.train_device)
       p, data_queue = self._rebuild_core_info(hardware, batch_data)
       try:
+        n_actions = sum(len(di['all_actions']) for di in batch_data)
         for _ in range(len(batch_data)):
           while data_queue.empty():
             if not p.is_alive():
@@ -828,27 +824,36 @@ class DirectAllocator:
           )
           actions = data_i['all_actions'].to(train_cfg.train_device)
           log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+          ratios = torch.clamp(
+            torch.exp(log_probs - data_i['all_log_probs'].to(train_cfg.train_device)),
+            min=0,
+            max=5
+          )
           valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
-          avg_n = len(batch_data) * len(actions)
-          cost_loss = torch.sum(data_i['overcost'] * log_probs[valid_mvs]) / avg_n
-          vm_loss = torch.sum(log_probs[~valid_mvs]) / avg_n
+
+          cost_loss = torch.sum(torch.max(
+            data_i['overcost'] * ratios[valid_mvs],
+            data_i['overcost'] * torch.clamp(ratios[valid_mvs], 0.8, 1.2)
+          )) / n_actions
+          vm_loss = torch.sum(torch.clamp(ratios[~valid_mvs], min=None, max=1.2)) / n_actions
           loss = ((1 - inv_pen) * cost_loss + inv_pen * vm_loss)
           loss.backward()
           total_cost_loss += cost_loss.item()
           total_vm_loss += vm_loss.item()
           total_loss += loss.item()
-          vm_ratio += valid_mvs.float().sum().item()/avg_n
+          vm_ratio += valid_mvs.float().sum().item()/n_actions
+      except:
+        next_train_data_future.abort()
       finally:
         p.terminate()
       torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
       optimizer.step()
-    
+
     while not next_train_data_future.finished:
       if not next_train_data_future.healty:
         raise Exception("some data gatherer worker has died")
       sleep(0.1)
-    
-    train_data = tuple(next_hardware, next_circuit, next_train_data_future.data)
+    train_data = (next_hardware, next_circuit, next_train_data_future.data)
 
     return total_loss, total_cost_loss, total_vm_loss, vm_ratio, train_data
   
