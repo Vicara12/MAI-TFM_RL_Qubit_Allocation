@@ -209,7 +209,7 @@ class PredictionModel(torch.nn.Module):
     (B,C,Q,H) = key_embs.shape
     compatibilities = torch.bmm(
       key_embs.reshape(B*C,Q,H),
-      proj_embs.reshape(B*C,1,H)
+      proj_embs.reshape(B*C,H,1)
     ).reshape(B,C,Q)
     return compatibilities.sum(dim=-1) # [B,C]
 

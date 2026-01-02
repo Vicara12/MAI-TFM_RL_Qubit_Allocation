@@ -797,13 +797,13 @@ class DirectAllocator:
           actions = data_i['all_actions'].to(train_cfg.train_device)
           log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
           valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
-          avg_n = len(batch_data) * len(replay_buffer)
           ratios = torch.exp(log_probs - data_i['all_log_probs'].to(train_cfg.train_device))
-          cost_loss = torch.mean(
+          avg_n = len(batch_data) * len(replay_buffer) * len(ratios)
+          cost_loss = torch.sum(
               data_i['overcost']*torch.clamp(ratios[valid_mvs], min=None, max=train_cfg.eps)
           ) / avg_n
           if (~valid_mvs).any():
-            vm_loss = torch.mean(
+            vm_loss = torch.sum(
                 torch.clamp(ratios[~valid_mvs], min=None, max=train_cfg.eps)
             ) / avg_n
           else:
@@ -813,7 +813,7 @@ class DirectAllocator:
           total_cost_loss += cost_loss.item()
           total_vm_loss += vm_loss.item()
           total_loss += loss.item()
-          vm_ratio += valid_mvs.float().mean().item()/avg_n
+          vm_ratio += valid_mvs.float().sum().item()/avg_n
       finally:
         p.terminate()
     torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
