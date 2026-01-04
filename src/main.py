@@ -113,11 +113,11 @@ def train_model_da(allocator, name: str):
       (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
       (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
     ]),
-    lr=5e-5,
+    lr=2.5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.1,
+    dropout=0.0,
   )
   allocator.train(train_cfg)
 
@@ -254,7 +254,7 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   allocator = DirectAllocator(
     device='cuda',
-    model_cfg=ModelConfigs(embed_size=64, num_heads=1, num_layers=1),
+    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=1),
     mode=DirectAllocator.Mode.Parallel,
   )
   train_model_da(allocator, name="da")

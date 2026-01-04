@@ -263,6 +263,7 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False,
   ) -> Optional[dict[str, torch.Tensor]]:
+    self.pred_model.output_logits(False)
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -346,6 +347,7 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False,
   ) -> Optional[dict[str, torch.Tensor]]:
+    self.pred_model.output_logits(True)
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -376,7 +378,7 @@ class DirectAllocator:
         if verbose:
           print((f"\033[2K\r - Optimization step {step+1}/{n_steps} ({int(100*(step+1)/n_steps)}%)"), end="")
           step += 1
-        pol, _, log_pol = self.pred_model(
+        logits, _, log_pol = self.pred_model(
           qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
           prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), -1, -1)),
           current_core_allocs=core_allocs.expand((len(paired_qubits), -1, -1)),
@@ -386,7 +388,7 @@ class DirectAllocator:
           next_interactions=next_interactions[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
         )
         qubit_set, core, valid = self._sample_action_parallel(
-          logits=log_pol,
+          logits=logits,
           core_caps=core_caps,
           n_qubits=2,
           cfg=cfg
@@ -415,7 +417,7 @@ class DirectAllocator:
 
         qubits = torch.tensor(free_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
         qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
-        _, _, log_pol = self.pred_model(
+        logits, _, log_pol = self.pred_model(
           qubits=qubits,
           prev_core_allocs=prev_core_allocs.expand((len(free_qubits), -1, -1)),
           current_core_allocs=core_allocs.expand((len(free_qubits), -1, -1)),
@@ -425,7 +427,7 @@ class DirectAllocator:
           next_interactions=next_interactions[:,slice_idx,:,:],
         )
         qubit_set, core, valid = self._sample_action_parallel(
-          logits=log_pol,
+          logits=logits,
           core_caps=core_caps,
           n_qubits=1,
           cfg=cfg
@@ -640,25 +642,28 @@ class DirectAllocator:
     data_queue: tmp.Queue,
     ret_train_data: bool,
   ):
-    self.pred_model.cpu()
-    self.pred_model.to(device)
-    with torch.no_grad():
-      for i, circuit in enumerate(circuits):
-        allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
-        train_data = self._allocate(
-          allocations=allocations,
-          circuit=circuit,
-          cfg=cfg,
-          hardware=hardware,
-          ret_train_data=ret_train_data,
-          verbose=False,
-        )
-        cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
-        opt_metadata = {'opt_n': n + i, 'cost': cost, 'allocations': allocations}
-        data_queue.put(opt_metadata | (train_data if train_data is not None else {}))
-    # Wait until parent reads data and sends terminate signal
-    while True:
-      sleep(10)
+    try:
+      self.pred_model.cpu()
+      self.pred_model.to(device)
+      with torch.no_grad():
+        for i, circuit in enumerate(circuits):
+          allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
+          train_data = self._allocate(
+            allocations=allocations,
+            circuit=circuit,
+            cfg=cfg,
+            hardware=hardware,
+            ret_train_data=ret_train_data,
+            verbose=False,
+          )
+          cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
+          opt_metadata = {'opt_n': n + i, 'cost': cost, 'allocations': allocations}
+          data_queue.put(opt_metadata | (train_data if train_data is not None else {}))
+      # Wait until parent reads data and sends terminate signal
+      while True:
+        sleep(10)
+    except KeyboardInterrupt:
+      pass
   
 
   def _launch_opt_workers(

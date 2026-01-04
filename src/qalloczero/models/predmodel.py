@@ -36,13 +36,27 @@ class PredictionModel(torch.nn.Module):
      torch.nn.ReLU(),
      torch.nn.Linear(embed_size//2, embed_size),
      torch.nn.ReLU(),
+     torch.nn.LayerNorm(embed_size),
     )
     self.ff_proj_q = torch.nn.Sequential(
      torch.nn.Linear(2*self.h, embed_size//2),
      torch.nn.ReLU(),
      torch.nn.Linear(embed_size//2, embed_size),
-     torch.nn.ReLU(),
+     torch.nn.LayerNorm(embed_size),
     )
+    self.ff_comb = torch.nn.Sequential(
+     torch.nn.Linear(2*embed_size, embed_size),
+     torch.nn.ReLU(),
+     torch.nn.Linear(embed_size, embed_size),
+     torch.nn.LayerNorm(embed_size),
+    )
+    encoder_layer = torch.nn.TransformerEncoderLayer(
+      d_model=embed_size,
+      nhead=num_heads,
+      dim_feedforward=embed_size,
+      batch_first=True
+    )
+    self.key_transf = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
     self.output_logits_ = False
   
 
@@ -207,11 +221,13 @@ class PredictionModel(torch.nn.Module):
     proj_embs: torch.Tensor,
   ) -> torch.Tensor:
     (B,C,Q,H) = key_embs.shape
+    mixed_key_embs = self.key_transf(key_embs.reshape(B*C,Q,H))
+    joined_key_embs = self.ff_comb(torch.cat([mixed_key_embs.reshape(B*C*Q,H), key_embs.reshape(B*C*Q,H)], dim=-1))
     compatibilities = torch.bmm(
-      key_embs.reshape(B*C,Q,H),
+      joined_key_embs.reshape(B*C,Q,H),
       proj_embs.reshape(B*C,H,1)
-    ).reshape(B,C,Q)
-    return compatibilities.sum(dim=-1) # [B,C]
+    ).reshape(B,C,Q) / torch.sqrt(torch.tensor(H))
+    return compatibilities.mean(dim=-1) # [B,C]
 
 
   def forward(
