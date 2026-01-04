@@ -96,11 +96,8 @@ def train_model_da(allocator, name: str):
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
     train_iters=3_000,
-    group_size=16*3*3,
-    n_workers=9,
-    ett=1024,
-    worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],
-    train_device='cuda:1',
+    batch_size=1,
+    group_size=4*3*3,
     validate_each=50,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
@@ -113,11 +110,11 @@ def train_model_da(allocator, name: str):
       (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
       (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
     ]),
-    lr=5e-5,
+    lr=2.5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
     hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.1,
+    dropout=0,
   )
   allocator.train(train_cfg)
 
@@ -133,7 +130,7 @@ def finetune_model_da(name: str):
     # >>>>>> FINETUNNING <<<<<<<<<
     train_iters=3_000,
     batch_size=8,
-    group_size=16*3*3,
+    group_size=4*3*3,
     train_circ_per_iter=16*8,
     eps=10,
     n_workers=9,
@@ -254,7 +251,7 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   allocator = DirectAllocator(
     device='cuda',
-    model_cfg=ModelConfigs(embed_size=64, num_heads=1, num_layers=1),
+    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=1),
     mode=DirectAllocator.Mode.Parallel,
   )
   train_model_da(allocator, name="da")
