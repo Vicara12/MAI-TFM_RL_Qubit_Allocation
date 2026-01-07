@@ -213,6 +213,7 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False,
   ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    self.pred_model.output_logits(False)
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -284,6 +285,7 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False,
   ) -> Optional[torch.Tensor]:
+    self.pred_model.output_logits(True)
     core_caps_orig = hardware.core_capacities.to(self.device)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
@@ -311,7 +313,7 @@ class DirectAllocator:
         if verbose:
           print((f"\033[2K\r - Optimization step {step+1}/{n_steps} ({int(100*(step+1)/n_steps)}%)"), end="")
           step += 1
-        pol, _, log_pol = self.pred_model(
+        logits, _, log_pol = self.pred_model(
           qubits=torch.tensor(paired_qubits, dtype=torch.int, device=self.device),
           prev_core_allocs=prev_core_allocs.expand((len(paired_qubits), -1, -1)),
           current_core_allocs=core_allocs.expand((len(paired_qubits), -1, -1)),
@@ -321,7 +323,7 @@ class DirectAllocator:
           next_interactions=next_interactions[:,slice_idx,:,:].expand((len(paired_qubits), -1, -1)),
         )
         qubit_set, core, valid = self._sample_action_parallel(
-          logits=log_pol,
+          logits=logits,
           core_caps=core_caps,
           n_qubits=2,
           cfg=cfg
@@ -347,7 +349,7 @@ class DirectAllocator:
 
         qubits = torch.tensor(free_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
         qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
-        _, _, log_pol = self.pred_model(
+        logits, _, log_pol = self.pred_model(
           qubits=qubits,
           prev_core_allocs=prev_core_allocs.expand((len(free_qubits), -1, -1)),
           current_core_allocs=core_allocs.expand((len(free_qubits), -1, -1)),
@@ -357,7 +359,7 @@ class DirectAllocator:
           next_interactions=next_interactions[:,slice_idx,:,:],
         )
         qubit_set, core, valid = self._sample_action_parallel(
-          logits=log_pol,
+          logits=logits,
           core_caps=core_caps,
           n_qubits=1,
           cfg=cfg
@@ -607,11 +609,11 @@ class DirectAllocator:
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-          cost_loss = torch.sum(all_costs*action_log_probs)
+          cost_loss = torch.sum(all_costs*action_log_probs)/(train_cfg.batch_size * circuit.n_steps)
           total_cost_loss += cost_loss.item()
-          valid_loss = torch.sum(inv_moves_sum)
+          valid_loss = inv_pen*torch.sum(inv_moves_sum)/(train_cfg.batch_size * circuit.n_steps)
           total_valid_loss += valid_loss.item()
-          loss = ((1 - inv_pen)*cost_loss + inv_pen*valid_loss)/train_cfg.batch_size
+          loss = cost_loss + valid_loss
           loss.backward()
           total_loss += loss.item()
           del circuit

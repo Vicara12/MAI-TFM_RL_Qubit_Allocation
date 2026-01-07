@@ -32,21 +32,36 @@ class PredictionModel(torch.nn.Module):
     super().__init__()
     self.h = 10 # Size of the feature space (number of features)
     self.ff_up = torch.nn.Sequential(
-     torch.nn.Linear(self.h, embed_size//2),
-     torch.nn.ReLU(),
-     torch.nn.Linear(embed_size//2, embed_size),
-     torch.nn.ReLU(),
+      torch.nn.Linear(self.h, embed_size//2),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size//2, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.LayerNorm(embed_size),
     )
     self.ff_proj_q = torch.nn.Sequential(
-     torch.nn.Linear(2*self.h, embed_size//2),
-     torch.nn.ReLU(),
-     torch.nn.Linear(embed_size//2, embed_size),
-     torch.nn.ReLU(),
+      torch.nn.Linear(2*self.h, embed_size//2),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size//2, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.LayerNorm(embed_size),
     )
     self.ff_comb = torch.nn.Sequential(
-     torch.nn.Linear(2*embed_size, embed_size),
-     torch.nn.ReLU(),
-     torch.nn.Linear(embed_size, embed_size),
+      torch.nn.Linear(2*embed_size, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.LayerNorm(embed_size),
+    )
+    self.ff_query_q = torch.nn.Sequential(
+      torch.nn.Linear(2*self.h, embed_size//2),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size//2, embed_size),
+      torch.nn.ReLU(),
+      torch.nn.Linear(embed_size, embed_size),
+      torch.nn.LayerNorm(embed_size),
     )
     encoder_layer = torch.nn.TransformerEncoderLayer(
       d_model=embed_size,
@@ -55,6 +70,11 @@ class PredictionModel(torch.nn.Module):
       batch_first=True
     )
     self.key_transf = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+    self.mha = torch.nn.MultiheadAttention(
+      embed_dim=embed_size,
+      num_heads=num_heads,
+      batch_first=True
+    )
     self.output_logits_ = False
   
 
@@ -192,7 +212,7 @@ class PredictionModel(torch.nn.Module):
     return result.squeeze(2)  # [B, C, h]
 
 
-  def _get_embeddings(self, inputs, qubits) -> Tuple[torch.Tensor, torch.Tensor]:
+  def _get_embeddings(self, inputs, qubits) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     (B,C,Q,_) = inputs.shape
 
     key_embs = self.ff_up(
@@ -210,22 +230,30 @@ class PredictionModel(torch.nn.Module):
     proj_embs = self.ff_proj_q(
       q_inputs.reshape(B*C,2*self.h) # [B*C,h]
     ).reshape(B,C,-1) # [B,C,H]
-    return key_embs, proj_embs
+    query_embs = self.ff_query_q(
+      q_inputs.reshape(B*C,2*self.h) # [B*C,h]
+    ).reshape(B,C,-1) # [B,C,H]
+    return key_embs, proj_embs, query_embs
   
 
   def _project(
     self,
     key_embs: torch.Tensor,
     proj_embs: torch.Tensor,
+    query_embs: torch.Tensor,
   ) -> torch.Tensor:
     (B,C,Q,H) = key_embs.shape
     mixed_key_embs = self.key_transf(key_embs.reshape(B*C,Q,H))
     joined_key_embs = self.ff_comb(torch.cat([mixed_key_embs.reshape(B*C*Q,H), key_embs.reshape(B*C*Q,H)], dim=-1))
-    compatibilities = torch.bmm(
+    core_embs, _ = self.mha(
+      query_embs.reshape(B*C,1,H),
       joined_key_embs.reshape(B*C,Q,H),
-      proj_embs.reshape(B*C,H,1)
-    ).reshape(B,C,Q)
-    return compatibilities.sum(dim=-1) # [B,C]
+      joined_key_embs.reshape(B*C,Q,H)
+    ) # [B*C,1,H]
+    logits = (core_embs.reshape(B,C,H) * proj_embs.reshape(B,C,H)).mean(dim=-1) # [B,C]
+    mean = logits.mean(dim=-1, keepdim=True)
+    std = logits.std(dim=-1, keepdim=True, unbiased=False)
+    return (logits - mean) / (std + 1e-8)
 
 
   def forward(
@@ -274,8 +302,8 @@ class PredictionModel(torch.nn.Module):
       circuit_emb,
       next_interactions,
     )
-    key_embs, proj_embs = self._get_embeddings(inputs, qubits)
-    logits = self._project(key_embs, proj_embs) # [B,C]
+    key_embs, proj_embs, query_embs = self._get_embeddings(inputs, qubits)
+    logits = self._project(key_embs, proj_embs, query_embs) # [B,C]
     vals = torch.tensor([[0.4] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:
