@@ -2,3 +2,5 @@ torch
 matplotlib
 qiskit
 pandas
+objgraph
+psutil

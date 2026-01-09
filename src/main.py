@@ -8,7 +8,7 @@ from sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCi
 from sampler.realcircuitsampler import RealCircuit
 from sampler.mixedcircuitsampler import MixedCircuitSampler
 from qalloczero.alg.directalloc import DirectAllocator
-from qalloczero.alg.alphazero import AlphaZero
+# from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.ts import ModelConfigs, TSConfig
 from utils.other_utils import save_train_data
 from utils.customtypes import Circuit, Hardware
@@ -154,91 +154,91 @@ def finetune_model_da(name: str):
   allocator.train(train_cfg)
 
 
-def optimize(allocator, hardware, circuit, cfg: Optional[TSConfig] = None):
-  with Timer.get('t'):
-    if isinstance(allocator, DirectAllocator):
-      result = allocator.optimize(circuit, hardware=hardware)
-    elif isinstance(allocator, AlphaZero):
-      result = allocator.optimize(circuit, cfg, hardware=hardware)
-    else:
-      raise Exception("Unrecognized algorithm type")
-  norm_cost = result[1]/circuit.n_gates_norm
-  norm_swaps = count_swaps(swaps_from_alloc(result[0], hardware.n_cores))/circuit.n_gates_norm
-  print(f" + t={Timer.get('t').time:.2f}s cost={result[1]} norm_cost={norm_cost} swaps={norm_swaps}")
+# def optimize(allocator, hardware, circuit, cfg: Optional[TSConfig] = None):
+#   with Timer.get('t'):
+#     if isinstance(allocator, DirectAllocator):
+#       result = allocator.optimize(circuit, hardware=hardware)
+#     elif isinstance(allocator, AlphaZero):
+#       result = allocator.optimize(circuit, cfg, hardware=hardware)
+#     else:
+#       raise Exception("Unrecognized algorithm type")
+#   norm_cost = result[1]/circuit.n_gates_norm
+#   norm_swaps = count_swaps(swaps_from_alloc(result[0], hardware.n_cores))/circuit.n_gates_norm
+#   print(f" + t={Timer.get('t').time:.2f}s cost={result[1]} norm_cost={norm_cost} swaps={norm_swaps}")
 
 
-def train_azero(azero: AlphaZero, name: str):
-  save_dir = f"trained/{name}"
-  cfg = TSConfig(
-    target_tree_size=512,
-    noise=1,
-    dirichlet_alpha=1.0,
-    discount_factor=0.0,
-    action_sel_temp=1,
-    ucb_c1=0.125,
-    ucb_c2=500,
-  )
-  # num_lq is not important as it will be derived from sampled hardware
-  circuit_sampler = RandomCircuit(num_lq=4, num_slices=16)
-  hardware_sampler = HardwareSampler(max_nqubits=24, range_ncores=[4,8])
-  train_cfg = AlphaZero.TrainConfig(
-    train_iters=1_000,
-    batch_size=16,
-    n_data_augs=1,
-    circ_sampler=circuit_sampler,
-    hardware_sampler=hardware_sampler,
-    noise_decrease_factor=0.975,
-    lr=5e-3,
-    ts_cfg=cfg,
-  )
-  try:
-    train_data = azero.train(train_cfg, train_device='cuda')
-    save_dir = azero.save(save_dir, overwrite=False)
-    save_train_data(data=train_data, train_folder=save_dir)
-  except KeyboardInterrupt:
-    pass
-  except Exception:
-    azero.save(save_dir, overwrite=False)
-    raise
+# def train_azero(azero: AlphaZero, name: str):
+#   save_dir = f"trained/{name}"
+#   cfg = TSConfig(
+#     target_tree_size=512,
+#     noise=1,
+#     dirichlet_alpha=1.0,
+#     discount_factor=0.0,
+#     action_sel_temp=1,
+#     ucb_c1=0.125,
+#     ucb_c2=500,
+#   )
+#   # num_lq is not important as it will be derived from sampled hardware
+#   circuit_sampler = RandomCircuit(num_lq=4, num_slices=16)
+#   hardware_sampler = HardwareSampler(max_nqubits=24, range_ncores=[4,8])
+#   train_cfg = AlphaZero.TrainConfig(
+#     train_iters=1_000,
+#     batch_size=16,
+#     n_data_augs=1,
+#     circ_sampler=circuit_sampler,
+#     hardware_sampler=hardware_sampler,
+#     noise_decrease_factor=0.975,
+#     lr=5e-3,
+#     ts_cfg=cfg,
+#   )
+#   try:
+#     train_data = azero.train(train_cfg, train_device='cuda')
+#     save_dir = azero.save(save_dir, overwrite=False)
+#     save_train_data(data=train_data, train_folder=save_dir)
+#   except KeyboardInterrupt:
+#     pass
+#   except Exception:
+#     azero.save(save_dir, overwrite=False)
+#     raise
 
 
-def benchmark(allocator, cfg: Optional[TSConfig] = None):
-  circuits = [
-    "qft", # Exact
-    "quantum_volume",
-    "graph_state", # Exact
-    "drapper_adder",
-    "cuccaro_adder", # A bit over
-    "qnn",
-    "deutsch_jozsa", # Exact
-  ]
-  # A2A configuration
-  hardware = Hardware(
-    core_capacities=torch.tensor([10]*10),
-    core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
-  )
+# def benchmark(allocator, cfg: Optional[TSConfig] = None):
+#   circuits = [
+#     "qft", # Exact
+#     "quantum_volume",
+#     "graph_state", # Exact
+#     "drapper_adder",
+#     "cuccaro_adder", # A bit over
+#     "qnn",
+#     "deutsch_jozsa", # Exact
+#   ]
+#   # A2A configuration
+#   hardware = Hardware(
+#     core_capacities=torch.tensor([10]*10),
+#     core_connectivity=(torch.ones(size=(10,10)) - torch.eye(10)),
+#   )
 
-  for name in circuits:
-    # circuit50 = Circuit.from_qasm(f'circuits/{name}_50.qasm', 50)
-    circuit100 = Circuit.from_qasm(f'circuits/{name}_100.qasm', 100)
-    print(f"[*] Optimizing {name}")
-    optimize(allocator, hardware, circuit100, cfg)
-
-
-def benchmark_da(checkpoint: str):
-  benchmark(allocator=DirectAllocator.load(checkpoint, device="cuda"))
+#   for name in circuits:
+#     # circuit50 = Circuit.from_qasm(f'circuits/{name}_50.qasm', 50)
+#     circuit100 = Circuit.from_qasm(f'circuits/{name}_100.qasm', 100)
+#     print(f"[*] Optimizing {name}")
+#     optimize(allocator, hardware, circuit100, cfg)
 
 
-def benchmark_azero(checkpoint: str):
-  cfg = TSConfig(
-    target_tree_size=512,
-    noise=0.10,
-    dirichlet_alpha=0.25,
-    discount_factor=0.0,
-    action_sel_temp=0,
-    ucb_c1=0.275,
-  )
-  benchmark(allocator=AlphaZero.load(checkpoint, device="cpu"), cfg=cfg)
+# def benchmark_da(checkpoint: str):
+#   benchmark(allocator=DirectAllocator.load(checkpoint, device="cuda"))
+
+
+# def benchmark_azero(checkpoint: str):
+#   cfg = TSConfig(
+#     target_tree_size=512,
+#     noise=0.10,
+#     dirichlet_alpha=0.25,
+#     discount_factor=0.0,
+#     action_sel_temp=0,
+#     ucb_c1=0.275,
+#   )
+#   benchmark(allocator=AlphaZero.load(checkpoint, device="cpu"), cfg=cfg)
 
 
 if __name__ == "__main__":
