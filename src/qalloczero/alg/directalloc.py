@@ -609,18 +609,14 @@ class DirectAllocator:
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
-          cost_loss = torch.sum(all_costs*action_log_probs)/(train_cfg.batch_size * circuit.n_steps)
+          n_samps = (train_cfg.batch_size * circuit.n_steps)
+          cost_loss = (1 - inv_pen) * torch.sum(all_costs*action_log_probs) / n_samps
           total_cost_loss += cost_loss.item()
-          valid_loss = inv_pen*torch.sum(inv_moves_sum)/(train_cfg.batch_size * circuit.n_steps)
+          valid_loss = inv_pen * torch.sum(inv_moves_sum) / n_samps
           total_valid_loss += valid_loss.item()
           loss = cost_loss + valid_loss
           loss.backward()
           total_loss += loss.item()
-          del circuit
-          del hardware
-          del cost_loss
-          del valid_loss
-          del loss
         torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
         optimizer.step()
         break
