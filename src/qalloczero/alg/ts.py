@@ -60,6 +60,7 @@ class TSEngine(ABC):
       core_conns: torch.Tensor,
       core_caps: torch.Tensor,
       circuit_embs: torch.Tensor,
+      next_inter: torch.Tensor,
       alloc_steps: torch.Tensor,
       cfg: TSConfig,
       ret_train_data: bool,

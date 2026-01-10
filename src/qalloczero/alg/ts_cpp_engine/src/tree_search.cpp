@@ -96,6 +96,7 @@ struct TreeSearch::OptCtx {
   at::Tensor core_caps_;
   at::Tensor core_conns_;
   at::Tensor circuit_embs_;
+  at::Tensor next_inter_;
   at::Tensor alloc_steps_;
   OptConfig cfg_;
   std::shared_ptr<Node> root_;
@@ -105,8 +106,8 @@ struct TreeSearch::OptCtx {
 
 TreeSearch::TrainData::TrainData(int n_steps, int n_qubits, int n_cores, at::Device device)
   : qubits(at::empty({n_steps, 2}, at::TensorOptions().dtype(at::kInt).device(device)))
-  , prev_allocs(at::empty({n_steps, n_qubits}, at::TensorOptions().dtype(at::kLong).device(device)))
-  , curr_allocs(at::empty({n_steps, n_qubits}, at::TensorOptions().dtype(at::kLong).device(device)))
+  , prev_allocs(at::empty({n_steps, n_cores, n_qubits}, at::TensorOptions().dtype(at::kFloat).device(device)))
+  , curr_allocs(at::empty({n_steps, n_cores, n_qubits}, at::TensorOptions().dtype(at::kFloat).device(device)))
   , core_caps(at::empty({n_steps, n_cores}, at::TensorOptions().dtype(at::kLong).device(device)))
   , slice_idx(at::empty({n_steps, 1}, at::TensorOptions().dtype(at::kLong).device(device)))
   , logits(at::empty({n_steps, n_cores}, at::TensorOptions().dtype(at::kFloat).device(device)))
@@ -129,13 +130,14 @@ auto TreeSearch::optimize(
   const at::Tensor& core_conns,
   const at::Tensor& core_caps,
   const at::Tensor& circuit_embs,
+  const at::Tensor& next_inter,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg,
   bool ret_train_data,
   bool verbose
 ) const -> std::tuple<at::Tensor, int, float, std::optional<TrainData>> {
   auto ctx = initialize_search(
-    n_qubits, core_conns, core_caps, circuit_embs, alloc_steps, cfg);
+    n_qubits, core_conns, core_caps, circuit_embs, next_inter, alloc_steps, cfg);
   at::Tensor allocs = at::empty({ctx.n_slices_, ctx.n_qubits}, at::kInt);
   std::optional<TrainData> tdata;
   if (ret_train_data)
@@ -217,6 +219,7 @@ auto TreeSearch::initialize_search(
   const at::Tensor& core_conns,
   const at::Tensor& core_caps,
   const at::Tensor& circuit_embs,
+  const at::Tensor& next_inter,
   const at::Tensor& alloc_steps,
   const OptConfig &cfg
 ) const -> OptCtx {
@@ -236,6 +239,7 @@ auto TreeSearch::initialize_search(
   ctx.core_conns_ = core_conns.to(device_);
   ctx.core_caps_ = core_caps.to(device_);
   ctx.circuit_embs_ = circuit_embs.to(device_);
+  ctx.next_inter_ = next_inter.to(device_);
   ctx.alloc_steps_ = alloc_steps;
   ctx.cfg_ = cfg;
   ctx.n_slices_ = circuit_embs.size(0);
@@ -305,8 +309,8 @@ auto TreeSearch::new_policy_and_val(
   int q1,
   int remaining_gates,
   int slice_idx,
-  const at::Tensor &prev_allocs, // [Q]
-  const at::Tensor &curr_allocs, // [B,Q]
+  const at::Tensor &prev_allocs, // [C,Q]
+  const at::Tensor &curr_allocs, // [B,C,Q]
   const at::Tensor &core_caps    // [B,C]
 ) const -> std::tuple<at::Tensor, at::Tensor> {
   auto qubits = at::tensor({q0, q1}, torch::kInt32).to(device_);
@@ -315,11 +319,12 @@ auto TreeSearch::new_policy_and_val(
   auto model_out = is_.infer(
     ctx.inference_ctx,
     qubits.expand({batch,2}),
-    prev_allocs.expand({batch, ctx.n_qubits}),
+    prev_allocs.expand({batch, ctx.n_cores, ctx.n_qubits}),
     curr_allocs,
     core_caps,
     ctx.core_conns_,
-    ctx.circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, ctx.n_qubits, ctx.n_qubits})
+    ctx.circuit_embs_.index({slice_idx, Slice(), Slice()}).expand({batch, ctx.n_qubits, ctx.n_qubits}),
+    ctx.next_inter_.index({slice_idx, Slice(), Slice()}).expand({batch, ctx.n_qubits, ctx.n_qubits})
   );
 
   // Get unnormalized value
@@ -348,8 +353,8 @@ auto TreeSearch::new_policy_and_val(
 
 auto TreeSearch::build_root(const OptCtx &ctx) const -> std::shared_ptr<Node> {
   auto root = std::make_shared<Node>();
-  root->current_allocs = ctx.n_cores*at::ones({ctx.n_qubits}, torch::kLong).to(device_);
-  root->prev_allocs    = ctx.n_cores*at::ones({ctx.n_qubits}, torch::kLong).to(device_);
+  root->current_allocs = at::zeros({ctx.n_cores, ctx.n_qubits}, torch::kFloat).to(device_);
+  root->prev_allocs    = at::zeros({ctx.n_cores, ctx.n_qubits}, torch::kFloat).to(device_);
   root->core_caps = ctx.core_caps_;
   root->alloc_step = 0;
   root->slice_idx  = 0;
@@ -406,17 +411,17 @@ auto TreeSearch::expand_node(const OptCtx &ctx, std::shared_ptr<Node> node) cons
     child->alloc_step = node->alloc_step + 1;
     child->slice_idx = slice_idx_children;
     if (child->slice_idx != node->slice_idx) {
-      child->current_allocs = ctx.n_cores * at::ones_like(*node->current_allocs).to(device_);
+      child->current_allocs = at::zeros_like(*node->current_allocs).to(device_);
       child->prev_allocs = node->current_allocs->clone();
-      (*child->prev_allocs)[qubit0] = action;
+      (*child->prev_allocs).index_put_({int(action), qubit0}, 1);
       if (qubit1 != -1)
-        (*child->prev_allocs)[qubit1] = action;
+        (*child->prev_allocs).index_put_({int(action), qubit1}, 1);
       child->core_caps = ctx.core_caps_;
     } else {
       child->current_allocs = node->current_allocs->clone();
-      (*child->current_allocs)[qubit0] = action;
+      (*child->current_allocs).index_put_({int(action), qubit0}, 1);
       if (qubit1 != -1)
-        (*child->current_allocs)[qubit1] = action;
+        (*child->current_allocs).index_put_({int(action), qubit1}, 1);
       child->prev_allocs = node->prev_allocs;
       child->core_caps = node->core_caps->clone();
       (*child->core_caps)[action] -= (qubit1 == -1 ? 1 : 2);
@@ -456,7 +461,7 @@ auto TreeSearch::action_cost(
     return 0;
 
   auto qubit_move_cost = [&](int q) -> float {
-    int prev_core = (*node->prev_allocs)[q].item<int>();
+    int prev_core = (*node->prev_allocs).index({Slice(), q}).nonzero().item<int>();
     return ctx.core_conns_[action][prev_core].item<float>();
   };
 

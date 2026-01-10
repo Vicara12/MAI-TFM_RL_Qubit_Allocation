@@ -54,6 +54,7 @@ public:
     const at::Tensor& core_conns,
     const at::Tensor& core_caps,
     const at::Tensor& circuit_embs,
+    const at::Tensor& next_inter,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg,
     bool ret_train_data,
@@ -81,6 +82,7 @@ private:
     const at::Tensor& core_conns,
     const at::Tensor& core_caps,
     const at::Tensor& circuit_embs,
+    const at::Tensor& next_inter,
     const at::Tensor& alloc_steps,
     const OptConfig &cfg
   ) const -> OptCtx;

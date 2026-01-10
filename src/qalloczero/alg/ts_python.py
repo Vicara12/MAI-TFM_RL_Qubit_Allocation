@@ -63,13 +63,14 @@ class TSPythonEngine(TSEngine):
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
     circuit_embs: torch.Tensor,
+    next_inter: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
     ret_train_data: bool,
     verbose: bool = False,
   ) -> Tuple[torch.Tensor, int, float, Optional[TSTrainData]]:
     allocs, tdata = self._init_opt(
-      core_conns, core_caps, circuit_embs, alloc_steps, cfg, ret_train_data)
+      core_conns, core_caps, circuit_embs, next_inter, alloc_steps, cfg, ret_train_data)
     n_expanded_nodes = 0
 
     for step in range(self.n_steps):
@@ -106,6 +107,7 @@ class TSPythonEngine(TSEngine):
     self.root = None
     self.slice_adjm = None
     self.circuit_embs = None
+    self.next_inter = None
     self.alloc_steps = None
     return allocs, n_expanded_nodes, expl_r, tdata
 
@@ -138,6 +140,7 @@ class TSPythonEngine(TSEngine):
     core_conns: torch.Tensor,
     core_caps: torch.Tensor,
     circuit_embs: torch.Tensor,
+    next_inter: torch.Tensor,
     alloc_steps: torch.Tensor,
     cfg: TSConfig,
     ret_train_data: bool
@@ -146,6 +149,7 @@ class TSPythonEngine(TSEngine):
     self.core_conns = core_conns.to(self.device)
     self.core_caps = core_caps.to(self.device)
     self.circuit_embs = circuit_embs.to(self.device)
+    self.next_inter = next_inter.to(self.device)
     self.alloc_steps = alloc_steps
     self.cfg = cfg
     self.n_qubits = circuit_embs.shape[-1]
@@ -156,8 +160,8 @@ class TSPythonEngine(TSEngine):
     if ret_train_data:
       tdata = TSTrainData(
         qubits=torch.empty([self.n_steps, 2], dtype=torch.int, device=self.device),
-        prev_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long, device=self.device),
-        curr_allocs=torch.empty([self.n_steps, self.n_qubits], dtype=torch.long, device=self.device),
+        prev_allocs=torch.empty([self.n_steps, self.n_cores, self.n_qubits], dtype=torch.float, device=self.device),
+        curr_allocs=torch.empty([self.n_steps, self.n_cores, self.n_qubits], dtype=torch.float, device=self.device),
         core_caps=torch.empty([self.n_steps, self.n_cores], dtype=torch.long, device=self.device),
         slice_idx=torch.empty([self.n_steps, 1], dtype=torch.long, device=self.device),
         logits=torch.empty([self.n_steps, self.n_cores], dtype=torch.float, device=self.device),
@@ -195,8 +199,7 @@ class TSPythonEngine(TSEngine):
     if temp == 0:
       action = torch.argmax(visit_counts).item()
     else:
-      probs = torch.softmax(visit_counts/temp, dim=-1)
-      action = torch.multinomial(probs, num_samples=1)
+      action = torch.multinomial(visit_counts, num_samples=1)
     # Return visit counts as they will be used later on during training as logits
     return action, visit_counts
 
@@ -211,6 +214,7 @@ class TSPythonEngine(TSEngine):
       core_capacities=node.core_caps.unsqueeze(0),
       core_connectivity=self.core_conns,
       circuit_emb=self.circuit_embs[node.current_slice].unsqueeze(0),
+      next_interactions=self.next_inter[node.current_slice].unsqueeze(0),
     )
     pol = pol.squeeze(0)
     v_norm = v_norm.item()
@@ -225,14 +229,17 @@ class TSPythonEngine(TSEngine):
     valid_cores = (node.core_caps >= n_qubits)
     pol[~valid_cores] = 0
     sum_pol = sum(pol)
-    pol /= sum_pol
+    if sum_pol < 1e-5:
+      pol[valid_cores] = 1/sum(valid_cores)
+    else:
+      pol /= sum_pol
     return pol, v
   
 
   def __buildRoot(self) -> Node:
     root = TSPythonEngine.Node(
-      current_allocs = self.n_cores*torch.ones(size=(self.n_qubits,), dtype=int, device=self.device),
-      prev_allocs = self.n_cores*torch.ones(size=(self.n_qubits,), dtype=int, device=self.device),
+      current_allocs = torch.zeros(size=(self.n_cores,self.n_qubits), dtype=torch.float, device=self.device),
+      prev_allocs = torch.zeros(size=(self.n_cores,self.n_qubits), dtype=torch.float, device=self.device),
       core_caps = self.core_caps,
       allocation_step = 0,
       current_slice = 0,
@@ -267,17 +274,17 @@ class TSPythonEngine(TSEngine):
       child.allocation_step = node.allocation_step+1
       child.current_slice = slice_idx_children
       if child.current_slice != node.current_slice:
-        child.current_allocs = self.n_cores*torch.ones_like(node.current_allocs)
+        child.current_allocs = torch.zeros_like(node.current_allocs)
         child.prev_allocs = node.current_allocs.clone()
-        child.prev_allocs[qubit0,] = action
+        child.prev_allocs[action, qubit0] = 1
         if qubit1 != -1:
-          child.prev_allocs[qubit1,] = action
+          child.prev_allocs[action, qubit1] = 1
         child.core_caps = self.core_caps
       else:
         child.current_allocs = node.current_allocs.clone()
-        child.current_allocs[qubit0,] = action
+        child.current_allocs[action, qubit0] = 1
         if qubit1 != -1:
-          child.current_allocs[qubit1,] = action
+          child.current_allocs[action, qubit1] = 1
         child.prev_allocs = node.prev_allocs
         child.core_caps = node.core_caps.clone()
         child.core_caps[action] -= 1 if qubit1 == -1 else 2
@@ -291,7 +298,7 @@ class TSPythonEngine(TSEngine):
     qubit0 = self.alloc_steps[node.allocation_step][1].item()
     qubit1 = self.alloc_steps[node.allocation_step][2].item()
     qubits = (qubit0,) if qubit1 == -1 else (qubit0, qubit1)
-    prev_cores = node.prev_allocs[qubits,].cpu()
+    prev_cores = node.prev_allocs[:,qubits].argmax(dim=0).cpu()
     costs = self.core_conns[action, prev_cores]
     return torch.sum(costs).item()
 

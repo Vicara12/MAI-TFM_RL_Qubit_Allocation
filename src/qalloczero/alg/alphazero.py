@@ -59,6 +59,12 @@ class AlphaZero:
     )
     self.backend.load_model(self.pred_model)
     self.pred_model.to(device)
+  
+
+  def set_backend(self, backend: Backend) -> Self:
+    self.backend = backend.value(device=self.device)
+    self.backend.replace_model(self.pred_model)
+    return self
 
 
   def save(self, path: str, overwrite: bool = False):
@@ -137,6 +143,7 @@ class AlphaZero:
       core_caps=hardware.core_capacities,
       core_conns=hardware.core_connectivity,
       circuit_embs=circuit.embedding,
+      next_inter=circuit.next_interaction,
       alloc_steps=circuit.alloc_steps,
       cfg=ts_cfg,
       ret_train_data=False,
@@ -167,6 +174,7 @@ class AlphaZero:
           core_caps=hardware.core_capacities,
           core_conns=hardware.core_connectivity,
           circuit_embs=circuits[i].embedding,
+          next_inter=circuits[i].next_interaction,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=False,
@@ -199,6 +207,7 @@ class AlphaZero:
           core_caps=hardware.core_capacities,
           core_conns=hardware.core_connectivity,
           circuit_embs=circuits[i].embedding,
+          next_inter=circuits[i].next_interaction,
           alloc_steps=circuits[i].alloc_steps,
           cfg=ts_cfg,
           ret_train_data=True,
