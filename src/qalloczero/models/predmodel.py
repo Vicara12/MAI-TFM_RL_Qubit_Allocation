@@ -281,7 +281,7 @@ class PredictionModel(torch.nn.Module):
     )
     key_embs, q_embs = self._get_embeddings(inputs, qubits)
     logits = self._project(key_embs, q_embs) # [B,C]
-    vals = torch.tensor([[0.4] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
+    vals = torch.tensor([[1] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
     log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
     if self.output_logits_:
       return logits, vals, log_probs

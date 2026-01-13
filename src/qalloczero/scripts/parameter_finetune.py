@@ -17,18 +17,18 @@ def linear_search():
   ts_cfg_params = dict(
     # target_tree_size = [4, 8, 16, 32, 64 ,128, 256, 512, 1024, 2048, 4096, 8192],
     # target_tree_size = [1024, 2048, 4096, 8192],
-    # noise=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
-    # dirichlet_alpha=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7, 0.9, 1, 1.1, 1.2, 1.3],
-    # discount_factor=[0, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-    action_sel_temp=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
+    noise=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
+    dirichlet_alpha=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7, 0.9, 1, 1.1, 1.2, 1.3],
+    discount_factor=[0, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    # action_sel_temp=[0, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.4, 0.5, 0.6, 0.7],
     # ucb_c1=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3, 3.5],
     # ucb_c2=[50, 500, 1_000, 5_000, 10_000, 15_000, 19_652, 20_000, 25_000, 30_000, 40_000],
-    # ucb_c1=[0, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25],
+    ucb_c1=[0, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25],
     # ucb_c1=[0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3],
     # ucb_c2=[500, 1_000, 5_000, 10_000, 15_000, 19_652, 20_000, 25_000, 30_000, 40_000],
   )
 
-  n_circuits = 32
+  n_circuits = 64
   n_qubits = 16
   n_slices = 16
   core_caps = torch.tensor([4,4,4,4], dtype=torch.int)
@@ -42,7 +42,7 @@ def linear_search():
   #   device='cpu',
   #   backend=AlphaZero.Backend.Cpp,
   # )
-  azero = AlphaZero.load("trained/da_v5", device="cpu")
+  azero = AlphaZero.load("trained/da_v13_ft", device="cpu")
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuits = [sampler.sample() for i in range(n_circuits)]
   # cfg_params = dict(
@@ -55,12 +55,12 @@ def linear_search():
   #   ucb_c2=500,
   # )
   cfg_params = dict(
-    target_tree_size=216,
-    noise=0.2,
+    target_tree_size=64,
+    noise=0.0,
     dirichlet_alpha=1.0,
     discount_factor=0.0,
     action_sel_temp=0,
-    ucb_c1=0.1,
+    ucb_c1=0.2,
     ucb_c2=500,
   )
   # ignore_params = ['target_tree_size', 'action_sel_temp']
