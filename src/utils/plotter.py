@@ -22,7 +22,10 @@ def drawCircuit(circuit_slice_gates: Tuple[Tuple[Tuple[int, int], ...], ...],
   for circuit_slice in circuit_slice_gates:
     vlines.append(vlines[-1] + len(circuit_slice))
   vlines = vlines[1:-1]
-  circuit_gates = reduce(lambda a,b: a+b, circuit_slice_gates, ())
+  if isinstance(circuit_slice_gates[0], tuple):
+    circuit_gates = reduce(lambda a,b: a+b, circuit_slice_gates, ())
+  else:
+    circuit_gates = reduce(lambda a,b: a+b, circuit_slice_gates, [])
   num_steps = len(circuit_gates)
   _, ax = plt.subplots(figsize=(num_steps * figsize_scale, num_lq))
   for q in range(num_lq):
@@ -42,7 +45,7 @@ def drawCircuit(circuit_slice_gates: Tuple[Tuple[Tuple[int, int], ...], ...],
   plt.tight_layout()
   if show:
     plt.show()
-  if title is not None:
+  if save_name is not None:
     plt.savefig(save_name, format=save_name.split('.')[-1])
 
 

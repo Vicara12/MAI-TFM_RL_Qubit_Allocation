@@ -95,60 +95,57 @@ def train_model_da(allocator, name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=3_000,
-    group_size=16*3*3,
-    n_workers=9,
-    ett=1024,
-    worker_devices=['cuda:0', 'cuda:1', 'cuda:2'],
-    train_device='cuda:1',
-    validate_each=50,
+    train_iters=16_000,
+    batch_size=1,
+    group_size=32,
+    validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f"trained/{name}",
     initial_noise=0.2,
     noise_decrease_factor=0.999,
     min_noise=0.0,
-    circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
-      (0.50, RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+    circ_sampler=MixedCircuitSampler(num_lq=20, samplers=[
+      (0.50,      RandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
+      (0.25,   HotRandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
+      (0.25, DenseRandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
     ]),
-    lr=2.5e-5,
+    lr=5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
-    hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
+    hardware_sampler=HardwareSampler(max_nqubits=20, range_ncores=[2,8]),
     dropout=0.0,
   )
   allocator.train(train_cfg)
 
 
 def finetune_model_da(name: str):
-  allocator = DirectAllocator.load(f'trained/{name}').set_mode(DirectAllocator.Mode.Parallel)
+  allocator = DirectAllocator.load(f'trained/{name}', checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel)
   validation_hardware = Hardware(
     core_capacities=torch.tensor([4]*4),
     core_connectivity=(torch.ones(4,4) - torch.eye(4))
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=10_000,
+    train_iters=16_000,
     batch_size=1,
     group_size=32,
     validate_each=25,
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f"trained/{name}_ft",
-    initial_noise=0.0,
+    initial_noise=0.18,
     noise_decrease_factor=0.999,
     min_noise=0.0,
-    circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
-      (0.50, RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+    circ_sampler=MixedCircuitSampler(num_lq=20, samplers=[
+      (0.50,      RandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
+      (0.25,   HotRandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
+      (0.25, DenseRandomCircuit(num_lq=20, num_slices=lambda: randint(4,16))),
     ]),
     lr=5e-5,
     inv_mov_penalization=0.3,
     mask_invalid=False,
-    hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
+    hardware_sampler=HardwareSampler(max_nqubits=20, range_ncores=[2,8]),
     dropout=0.0,
   )
   allocator.train(train_cfg)
@@ -251,13 +248,13 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   # allocator = DirectAllocator(
   #   device='cuda',
-  #   model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=1),
+  #   model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
   #   mode=DirectAllocator.Mode.Parallel,
   # )
   # train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
-  finetune_model_da(name="da_v13")
+  finetune_model_da(name="da")
 
   ''' Train the base models with qalloczero '''
   # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")

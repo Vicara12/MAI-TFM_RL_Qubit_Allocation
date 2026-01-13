@@ -542,8 +542,8 @@ class DirectAllocator:
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - it - 1)
 
         print((
-          f"{pheader} l={loss:.1f} (c={cost_loss:.1f} v={val_loss:.1f}) \t n={opt_cfg.noise:.3f} "
-          f"vm={vm_ratio:.2f} t={self.iter_timer.time:.2f}s "
+          f"{pheader} l={loss:.3f} (c={cost_loss:.3f} v={val_loss:.3f}) \t n={opt_cfg.noise:.3f} "
+          f"vm={vm_ratio:.3f} t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} est. left) "
           f"ram={get_ram_usage():.2f}GB"
         ))
