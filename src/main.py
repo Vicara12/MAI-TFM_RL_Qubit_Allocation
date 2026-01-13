@@ -246,15 +246,15 @@ if __name__ == "__main__":
   # architecture_shape_comparison()
 
   ''' Train the base models with direct allocation '''
-  # allocator = DirectAllocator(
-  #   device='cuda',
-  #   model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
-  #   mode=DirectAllocator.Mode.Parallel,
-  # )
-  # train_model_da(allocator, name="da")
+  allocator = DirectAllocator(
+    device='cuda',
+    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
+    mode=DirectAllocator.Mode.Parallel,
+  )
+  train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
-  finetune_model_da(name="da")
+  # finetune_model_da(name="da")
 
   ''' Train the base models with qalloczero '''
   # train_azero(AlphaZero(model_cfg=ModelConfigs(layers=[16,32])), name="az")
