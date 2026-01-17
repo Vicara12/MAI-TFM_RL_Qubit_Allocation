@@ -36,6 +36,9 @@ qubits.
 
 ## Compiling the CPP tree search engine
 
+Note that this step is only neccessary running the AlphaZero-like algorithm.
+For direct allocation the Python code can be executed as-is.
+
 Activate an environment with torch and install `CMake` and `C++17`.
 Then go to `src/qalloczero/alg/ts_cpp_engine/`, make a `build` directory and run, from outside the
 run directory,
