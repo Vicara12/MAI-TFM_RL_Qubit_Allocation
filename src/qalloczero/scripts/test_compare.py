@@ -7,9 +7,8 @@ from sampler.randomcircuit import RandomCircuit
 from utils.plotter import drawCircuit
 from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
 from qalloczero.alg.ts import TSConfig
-# from qalloczero.alg.alphazero import AlphaZero
+from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.directalloc import DirectAllocator
-from russo.tests.hungarian import HQA
 
 
 def validate():
@@ -22,26 +21,9 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    hqa = HQA(lookahead=True, verbose=True),
     da_seq  = DirectAllocator.load("trained/da_v2_ft",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
     da_par  = DirectAllocator.load("trained/da_v2_ft",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
-    
-    # da_seq_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
-    # da_seq_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
-    # da_seq_v5 = DirectAllocator.load("trained/da_v6", device="cpu").set_mode(DirectAllocator.Mode.Sequential),
-
-    # da_par_v  = DirectAllocator.load("trained/da_v7"   , device="cpu", checkpoint=175).set_mode(DirectAllocator.Mode.Parallel),
-    # da_par_v2 = DirectAllocator.load("trained/da_v2", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
-    # da_par_v4 = DirectAllocator.load("trained/da_v4", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
-    # da_par_v5 = DirectAllocator.load("trained/da_v5", device="cpu").set_mode(DirectAllocator.Mode.Parallel),
-
-    # az_v  = AlphaZero.load("trained/da",    device="cpu"),
-    # az_v2 = AlphaZero.load("trained/da_v2", device="cpu"),
-    # az_v4 = AlphaZero.load("trained/da_v4", device="cpu"),
-
-    # da_sequential = DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Sequential),
-    # da_parallel   = DirectAllocator.load("trained/da_v6", device="cuda", checkpoint=1000).set_mode(DirectAllocator.Mode.Parallel),
-
+    # azero =               AlphaZero.load("trained/da_v2_ft", device="cpu"),
   )
   cfg = TSConfig(
     target_tree_size=512,
@@ -57,7 +39,7 @@ def validate():
   for (name, algo) in algos.items():
     print(f"[*] Optimizing {name}")
     with Timer.get('t'):
-      if isinstance(algo, DirectAllocator) or isinstance(algo, HQA):
+      if isinstance(algo, DirectAllocator):
         results = []
         for circ in circuits:
           results.append(algo.optimize(circ, hardware=hardware, verbose=True))
@@ -75,12 +57,6 @@ def validate():
 
 
 def benchmark():
-
-  # [*] Optimizing with hqa
-  #  + qft: t=873.88s cost=1149.0 (0.23)
-  #  + graph_state: t=1278.25s cost=1485.0 (0.61)
-  #  + deutsch_jozsa: t=40.84s cost=36.0 (0.36)
-
   circuit_names = [
     "qft", # Exact
     # "quantum_volume",
@@ -99,12 +75,9 @@ def benchmark():
 
 
   algos = dict(
-    # hqa = HQA(lookahead=True, verbose=True),
     da_sequential = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
     da_parallel   = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
-    # azero =               AlphaZero.load("trained/az", device="cpu"),
-    # da_azero = DirectAllocator.load("trained/azero", device="cuda"),
-    # azero_azero =    AlphaZero.load("trained/azero", device="cpu"),
+    # azero =               AlphaZero.load("trained/da_v2_ft", device="cpu"),
   )
   cfg = TSConfig(
     target_tree_size=512,
@@ -120,9 +93,7 @@ def benchmark():
     print(f"[*] Optimizing with {name}")
     for cname, circ in circuits.items():
       with Timer.get('t'):
-        if isinstance(algo, HQA):
-          cs, cost = algo.optimize(circ, hardware=hardware)
-        elif isinstance(algo, DirectAllocator):
+        if isinstance(algo, DirectAllocator):
           allocs, cost = algo.optimize(circ, hardware=hardware, verbose=True)
         elif isinstance(algo, AlphaZero):
           allocs, cost, _, er = algo.optimize(circ, cfg, hardware=hardware, verbose=True)
@@ -165,9 +136,7 @@ def compare_w_sota():
     print(f"[*] Optimizing with {name}")
     for cname, circ in circuits.items():
       with Timer.get('t'):
-        if isinstance(algo, HQA):
-          cs, cost = algo.optimize(circ, hardware=hardware)
-        elif isinstance(algo, DirectAllocator):
+        if isinstance(algo, DirectAllocator):
           allocs, cost = algo.optimize(circ, hardware=hardware, verbose=True)
         elif isinstance(algo, AlphaZero):
           pass

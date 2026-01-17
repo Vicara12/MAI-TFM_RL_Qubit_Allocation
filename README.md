@@ -1,6 +1,5 @@
 # Compiling the CPP tree search engine
 
-
 Activate an environment with torch and install `CMake` and `C++17`.
 Then go to `src/qalloczero/alg/ts_cpp_engine/`, make a `build` directory and run, from outside the
 run directory,
