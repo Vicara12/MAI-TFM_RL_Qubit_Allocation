@@ -120,14 +120,14 @@ def train_model_da(allocator, name: str):
 
 
 def finetune_model_da(name: str):
-  allocator = DirectAllocator.load(f'trained/{name}', checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel)
+  allocator = DirectAllocator.load(f'trained/{name}', checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential)
   validation_hardware = Hardware(
     core_capacities=torch.tensor([4]*4),
     core_connectivity=(torch.ones(4,4) - torch.eye(4))
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=10_000,
+    train_iters=13_000,
     batch_size=1,
     group_size=32,
     validate_each=25,
