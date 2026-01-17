@@ -29,7 +29,10 @@ These findings demonstrate that learning-based approaches can effectively break 
 bottlenecks of classical algorithms, a crucial step for managing future systems with millions of
 qubits.
 
-![allocation](data/resources/allocation.png)
+<div align="center">
+  <img src="data/resources/allocation.png" width="600">
+</div>
+
 
 ## Compiling the CPP tree search engine
 
