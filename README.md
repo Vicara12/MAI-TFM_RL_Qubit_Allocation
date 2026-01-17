@@ -1,4 +1,37 @@
-# Compiling the CPP tree search engine
+# RL Qubit Allocation
+
+The scaling of quantum processors is currently limited by technical challenges such as decoherence and
+cross-talk.
+Distributed quantum computing deals with these limitations by interconnecting smaller and easier to
+handle quantum cores, but it introduces the challenge of minimizing slow and error-prone inter-core
+communications.
+This work addresses the Qubit Allocation problem, a discrete optimization task aiming to distribute
+quantum circuits across cores to minimize communication costs.
+
+Classical algorithms like the Hungarian Qubit Allocation (HQA) currently represent the state of the
+art, but they suffer from poor scalability with circuit size.
+In contrast, existing Reinforcement Learning (RL) approaches often lack flexibility, requiring
+retraining if hardware configurations change, and are far from the solution quality of classical
+methods.
+
+To overcome these limitations, this thesis proposes a flexible, transformer-based architecture
+capable of handling arbitrary numbers of qubits and cores without retraining.
+The policy is trained using a combination of REINFORCE and Group Relative Policy Optimization (GRPO),
+two well known RL algorithms.
+Furthermore, to explore the test-time compute paradigm applied to this problem, we
+introduce QAllocZero, an AlphaZero-inspired tree search algorithm implemented in C++ that utilizes
+the trained policy as a heuristic.
+
+The results show that the trained policy achieves up to 25\% improvement in allocation cost with
+respect to the state of the art (HQA) and narrows the gap between RL and HQA for most common
+circuits while maintaining scalable execution time.
+These findings demonstrate that learning-based approaches can effectively break the computational
+bottlenecks of classical algorithms, a crucial step for managing future systems with millions of
+qubits.
+
+![allocation](data/resources/allocation.png)
+
+## Compiling the CPP tree search engine
 
 Activate an environment with torch and install `CMake` and `C++17`.
 Then go to `src/qalloczero/alg/ts_cpp_engine/`, make a `build` directory and run, from outside the
@@ -53,7 +86,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
 
-# Training the model
+## Training the model
 
 To properly parallelize training across multiple workers run this command
 before executing the python script
