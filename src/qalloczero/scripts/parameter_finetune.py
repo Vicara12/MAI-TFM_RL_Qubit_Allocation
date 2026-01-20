@@ -42,7 +42,7 @@ def linear_search():
   #   device='cpu',
   #   backend=AlphaZero.Backend.Cpp,
   # )
-  azero = AlphaZero.load("trained/da_v13_ft", device="cpu")
+  azero = AlphaZero.load("trained/da_v2_ft", device="cpu")
   sampler = RandomCircuit(num_lq=n_qubits, num_slices=n_slices)
   circuits = [sampler.sample() for i in range(n_circuits)]
   # cfg_params = dict(

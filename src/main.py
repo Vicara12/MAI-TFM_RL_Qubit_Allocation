@@ -4,7 +4,7 @@ from sampler.hardwaresampler import HardwareSampler
 from sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCircuit
 from sampler.mixedcircuitsampler import MixedCircuitSampler
 from qalloczero.alg.directalloc import DirectAllocator
-from qalloczero.scripts.test_compare import validate, benchmark
+from qalloczero.scripts.test_compare import validate, benchmark, compare_w_sota
 from qalloczero.alg.ts import ModelConfigs
 from utils.customtypes import Hardware
 
@@ -88,3 +88,4 @@ if __name__ == "__main__":
   ''' Benchmark '''
   validate()
   benchmark()
+  compare_w_sota()

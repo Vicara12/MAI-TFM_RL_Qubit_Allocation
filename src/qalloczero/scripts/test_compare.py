@@ -117,8 +117,8 @@ def compare_w_sota():
     circuits[name] = Circuit(slice_gates=slices, n_qubits=n_qubits)
   
   algos = dict(
-    da_sequential = DirectAllocator.load("trained/da_v13_ft", device="cuda", checkpoint=9475).set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v13_ft", device="cuda", checkpoint=9475).set_mode(DirectAllocator.Mode.Parallel),
+    da_sequential = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
   )
 
   n_cores = n_qubits//10
