@@ -38,11 +38,12 @@ class DirectAllocator:
   @dataclass
   class TrainConfig:
     train_iters: int
+    iter_data_buffer_size: int
     group_size: int
     n_workers: int
     worker_devices: list[str]
     train_device: str
-    ett: int # Take n circuits from the extremes of group to train
+    iter_train_group_size: int
     validate_each: int
     validation_hardware: Hardware
     validation_circuits: list[Circuit]
@@ -53,6 +54,7 @@ class DirectAllocator:
     circ_sampler: CircuitSampler
     lr: float
     inv_mov_penalization: float
+    entropy_factor: float
     hardware_sampler: HardwareSampler
     mask_invalid: bool
     dropout: float = 0.0
@@ -576,6 +578,7 @@ class DirectAllocator:
       loss = [],
       cost_loss = [],
       val_loss = [],
+      ent_loss = [],
       noise = [],
       vm=[],
       t = []
@@ -585,7 +588,7 @@ class DirectAllocator:
     init_t = time()
     best_model = dict(val_cost=None, vc_mean=None)
     save_path = self._make_save_dir(train_cfg.store_path, overwrite=False)
-    train_data = None
+    train_data = []
 
     try:
       for it in range(train_cfg.train_iters):
@@ -593,7 +596,7 @@ class DirectAllocator:
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
 
-        loss, cost_loss, val_loss, vm_ratio, train_data = self._train_batch(
+        loss, cost_loss, val_loss, ent_loss, vm_ratio, train_data = self._train_batch(
           pheader=pheader,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
@@ -609,7 +612,7 @@ class DirectAllocator:
         t_left = self.iter_timer.avg_time * (train_cfg.train_iters - it - 1)
 
         print((
-          f"{pheader} l={loss:.4f} (c={cost_loss:.4f} v={val_loss:.4f}) \t n={opt_cfg.noise:.3f} "
+          f"{pheader} l={loss:.4f} (c={cost_loss:.4f} v={val_loss:.4f} e={ent_loss:.4f}) \t n={opt_cfg.noise:.3f} "
           f"vm={vm_ratio:.3f} t={self.iter_timer.time:.2f}s "
           f"({int(t_left)//3600:02d}:{(int(t_left)%3600)//60:02d}:{int(t_left)%60:02d} left) "
           f"ram={get_ram_usage():.2f}GB"
@@ -618,6 +621,7 @@ class DirectAllocator:
         data_log['loss'].append(loss)
         data_log['cost_loss'].append(cost_loss)
         data_log['val_loss'].append(val_loss)
+        data_log['ent_loss'].append(ent_loss)
         data_log['noise'].append(opt_cfg.noise)
         data_log['t'].append(time() - init_t)
         data_log['vm'].append(vm_ratio)
@@ -759,7 +763,7 @@ class DirectAllocator:
     optimizer: torch.optim.Optimizer,
     opt_cfg: DAConfig,
     train_cfg: TrainConfig,
-    train_data: Optional[tuple[Hardware,Circuit,list[dict]]],
+    train_data: list[tuple[Hardware,Circuit,list[dict]]],
   ) -> float:
     # Sample hardware and circuit and optimize groups size times
     next_hardware = train_cfg.hardware_sampler.sample()
@@ -781,10 +785,12 @@ class DirectAllocator:
 
     total_cost_loss = 0
     total_vm_loss = 0
+    total_ent_loss = 0
     total_loss = 0
     vm_ratio = 0
-    if train_data is not None:
-      hardware, circuit, batch_data = train_data
+    n_actions = train_cfg.iter_train_group_size * sum(c.n_steps for (_,c,_) in train_data)
+    for (hardware, circuit, batch_data) in train_data:
+      batch_data = random.sample(batch_data, train_cfg.iter_train_group_size)
       # Normalize costs by number of gates
       for i in range(len(batch_data)):
         batch_data[i]['cost'] /= (circuit.n_gates_norm + 1)
@@ -792,16 +798,12 @@ class DirectAllocator:
       # Normalize cost vector and select 16 best and worst samples
       overcost = torch.tensor([v['cost'] for v in batch_data])
       overcost = (overcost - overcost.mean().item()) / max(overcost.std(unbiased=True), 1e-5)
-      # Clamp more upwards because it's very easy to mess cost up badly but difficult to improve it
-      overcost = torch.clamp(overcost, -5.0, 2.0)
       batch_data = [(item | {"overcost": ov.item()}) for item, ov in zip(batch_data, overcost)]
       batch_data = sorted(batch_data, key=lambda x: x['overcost'])
-      ett = train_cfg.ett
-      # Take only ett//2 top and worst samples from group to train
-      batch_data = batch_data if len(batch_data) < ett else batch_data[:ett//2] + batch_data[-ett//2:]
 
       self.pred_model.train()
       inv_pen = train_cfg.inv_mov_penalization
+      ent_fact = train_cfg.entropy_factor
       optimizer.zero_grad()
 
       core_con = hardware.core_connectivity.to(train_cfg.train_device)
@@ -810,7 +812,6 @@ class DirectAllocator:
       ni = circuit.next_interaction[slices].to(train_cfg.train_device)
       p, data_queue = self._rebuild_core_info(hardware, batch_data)
       try:
-        n_actions = sum(len(di['all_actions']) for di in batch_data)
         for _ in range(len(batch_data)):
           while data_queue.empty():
             if not p.is_alive():
@@ -835,22 +836,26 @@ class DirectAllocator:
             max=5
           )
           valid_mvs = data_i['all_valid'].to(train_cfg.train_device)
+          dist_entropy = torch.sum( - torch.exp(log_probs) * log_probs, dim=-1)
 
-          cost_loss = torch.sum(torch.max(
+          cost_loss = (1 - inv_pen - ent_fact) * torch.sum(torch.max(
             data_i['overcost'] * ratios[valid_mvs],
             data_i['overcost'] * torch.clamp(ratios[valid_mvs], 0.8, 1.2)
           )) / n_actions
-          vm_loss = torch.sum(torch.clamp(ratios[~valid_mvs], min=None, max=1.2)) / n_actions
-          loss = ((1 - inv_pen) * cost_loss + inv_pen * vm_loss)
+          vm_loss = inv_pen * torch.sum(torch.clamp(ratios[~valid_mvs], min=None, max=1.2)) / n_actions
+          ent_loss = - ent_fact * torch.sum(dist_entropy) / n_actions # We want to maximize entropy
+          loss = cost_loss + vm_loss + ent_loss
           loss.backward()
           total_cost_loss += cost_loss.item()
           total_vm_loss += vm_loss.item()
+          total_ent_loss += ent_loss.item()
           total_loss += loss.item()
           vm_ratio += valid_mvs.float().sum().item()/n_actions
       except:
         next_train_data_future.abort()
       finally:
         p.terminate()
+    if train_data:
       torch.nn.utils.clip_grad_norm_(self.pred_model.parameters(), max_norm=1)
       optimizer.step()
 
@@ -858,9 +863,10 @@ class DirectAllocator:
       if not next_train_data_future.healty:
         raise Exception("some data gatherer worker has died")
       sleep(0.1)
-    train_data = (next_hardware, next_circuit, next_train_data_future.data)
+    train_data.append((next_hardware, next_circuit, next_train_data_future.data))
+    train_data = train_data[-train_cfg.iter_data_buffer_size:]
 
-    return total_loss, total_cost_loss, total_vm_loss, vm_ratio, train_data
+    return total_loss, total_cost_loss, total_vm_loss, total_ent_loss, vm_ratio, train_data
   
 
   def _validation(
