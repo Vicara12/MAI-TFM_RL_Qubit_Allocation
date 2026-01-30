@@ -44,7 +44,7 @@ def test_direct_alloc():
   )
 
   if test_run:
-    allocator = DirectAllocator.load("trained/da_v6", device="cpu").set_mode(DirectAllocator.Mode.Parallel)
+    allocator = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Fast)
     circuit = sampler.sample()
     circuit.alloc_slices
     torch.manual_seed(42)
