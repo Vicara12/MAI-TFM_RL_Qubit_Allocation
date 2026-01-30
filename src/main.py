@@ -4,6 +4,7 @@ import torch
 from typing import Optional
 from random import randint
 from sampler.hardwaresampler import HardwareSampler
+from sampler.structrandomcirc import StructuredRandomCircuit
 from sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCircuit
 from sampler.realcircuitsampler import RealCircuit
 from sampler.mixedcircuitsampler import MixedCircuitSampler
@@ -95,8 +96,8 @@ def train_model_da(allocator, name: str):
   )
   val_sampler = RandomCircuit(num_lq=16, num_slices=32)
   train_cfg = DirectAllocator.TrainConfig(
-    train_iters=16_000,
-    iter_data_buffer_size=3,
+    train_iters=30_000,
+    iter_data_buffer_size=4,
     group_size=16*3,
     n_workers=3,
     iter_train_group_size=16,
@@ -106,20 +107,22 @@ def train_model_da(allocator, name: str):
     validation_hardware=validation_hardware,
     validation_circuits=[val_sampler.sample() for _ in range(32)],
     store_path=f"trained/{name}",
-    initial_noise=0.0,
-    noise_decrease_factor=0.999,
+    initial_noise=0.2,
+    noise_decrease_factor=0.99985,
     min_noise=0.0,
-    circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
-      (0.50, RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-      (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
-    ]),
-    lr=1e-4,
+    circ_sampler=RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16), reflow=True),
+    # circ_sampler=StructuredRandomCircuit(num_lq=16, slice_range=[8,16], pattern_size=4, reflow=False),
+    # circ_sampler=MixedCircuitSampler(num_lq=24, samplers=[
+    #   (0.50, RandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+    #   (0.25, HotRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+    #   (0.25, DenseRandomCircuit(num_lq=24, num_slices=lambda: randint(8,16))),
+    # ]),
+    lr=5e-5,
     inv_mov_penalization=0.5,
-    entropy_factor=0.001,
+    entropy_factor=0.0,
     mask_invalid=False,
-    hardware_sampler=HardwareSampler(max_nqubits=24, range_ncores=[2,8]),
-    dropout=0.0,
+    hardware_sampler=HardwareSampler(max_nqubits=20, range_ncores=[2,8]),
+    dropout=0.1,
   )
   allocator.train(train_cfg)
 
@@ -256,7 +259,7 @@ if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
   allocator = DirectAllocator(
     device='cuda',
-    model_cfg=ModelConfigs(embed_size=32, num_heads=2, num_layers=2),
+    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
     mode=DirectAllocator.Mode.Sequential,
   )
   train_model_da(allocator, name="da")

@@ -42,7 +42,7 @@ def drawCircuit(circuit_slice_gates: Tuple[Tuple[Tuple[int, int], ...], ...],
   plt.tight_layout()
   if show:
     plt.show()
-  if title is not None:
+  if save_name is not None:
     plt.savefig(save_name, format=save_name.split('.')[-1])
 
 
