@@ -454,8 +454,8 @@ class DirectAllocator:
               next_interactions=next_interactions[:,slice_idx,:,:],
             )
             probs_core = probs[:, c_i]
-            inverse_prob = 1/(probs_core + 1e-5)
-            # inverse_prob = (1 - probs_core * 0.99) # Avoid division by zero if all are 1 (very unlucky!)
+            # inverse_prob = 1/(probs_core + 1e-5)
+            inverse_prob = (1 - probs_core * 0.99) # Avoid division by zero if all are 1 (very unlucky!)
             inverse_prob /= inverse_prob.sum()
             # Add exploration noise to the priors
             if cfg.noise != 0:
@@ -474,7 +474,7 @@ class DirectAllocator:
             new_core_caps[c_i] += 1
             core_caps = new_core_caps
 
-      self.pred_model.output_logits(False)
+      self.pred_model.output_logits(True)
       
       # Allocate paired qubits first
       while paired_qubits:
