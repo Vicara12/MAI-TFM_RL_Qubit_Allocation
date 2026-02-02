@@ -7,7 +7,7 @@ from sampler.randomcircuit import RandomCircuit
 from utils.plotter import drawCircuit
 from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
 from qalloczero.alg.ts import TSConfig
-from qalloczero.alg.alphazero import AlphaZero
+# from qalloczero.alg.alphazero import AlphaZero
 from qalloczero.alg.directalloc import DirectAllocator
 
 
@@ -21,8 +21,9 @@ def validate():
   core_conn = torch.ones((n_cores,n_cores)) - torch.eye(n_cores)
   hardware = Hardware(core_capacities=core_caps, core_connectivity=core_conn)
   algos = dict(
-    da_seq  = DirectAllocator.load("trained/da_v2_ft",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    da_par  = DirectAllocator.load("trained/da_v2_ft",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
+    da_fast = DirectAllocator.load("trained/da",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Fast),
+    da_seq  = DirectAllocator.load("trained/da",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_par  = DirectAllocator.load("trained/da",    device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/da_v2_ft", device="cpu"),
   )
   cfg = TSConfig(
@@ -75,8 +76,9 @@ def benchmark():
 
 
   algos = dict(
-    da_sequential = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
-    da_parallel   = DirectAllocator.load("trained/da_v2_ft", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
+    da_fast       = DirectAllocator.load("trained/da", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Fast),
+    da_sequential = DirectAllocator.load("trained/da", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential),
+    da_parallel   = DirectAllocator.load("trained/da", device="cuda", checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel),
     # azero =               AlphaZero.load("trained/da_v2_ft", device="cpu"),
   )
   cfg = TSConfig(
