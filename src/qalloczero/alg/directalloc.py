@@ -393,6 +393,7 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False,
   ):
+    self.pred_model.output_logits(True)
     core_allocs = torch.zeros(
       [hardware.n_cores, hardware.n_qubits],
       dtype=torch.float,
@@ -418,7 +419,6 @@ class DirectAllocator:
       paired_qubits = []
       free_qubits = []
 
-      self.pred_model.output_logits(False)
       # Decide which qubits need to be reallocated (all qubits if first slice)
       if slice_idx == 0:
         free_qubits = list(free_qubits_slice)
@@ -444,7 +444,7 @@ class DirectAllocator:
             assert free_core_qubits, f'No available free qubits found for slice {slice_idx} and core {c_i}'
             qubits = torch.tensor(free_core_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
             qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
-            probs, _, log_pol = self.pred_model(
+            logits, _, log_pol = self.pred_model(
               qubits=qubits,
               prev_core_allocs=prev_core_allocs.expand((len(free_core_qubits), -1, -1)),
               current_core_allocs=core_allocs.expand((len(free_core_qubits), -1, -1)),
@@ -453,28 +453,20 @@ class DirectAllocator:
               circuit_emb=circ_embs[:,slice_idx,:,:].expand((len(free_core_qubits), -1, -1)),
               next_interactions=next_interactions[:,slice_idx,:,:],
             )
-            probs_core = probs[:, c_i]
-            # inverse_prob = 1/(probs_core + 1e-5)
-            inverse_prob = (1 - probs_core * 0.99) # Avoid division by zero if all are 1 (very unlucky!)
-            inverse_prob /= inverse_prob.sum()
+            inverse_prob_all = torch.softmax(-logits, dim=-1)
+            inverse_prob = inverse_prob_all[:, c_i]/inverse_prob_all[:, c_i].sum()
             # Add exploration noise to the priors
             if cfg.noise != 0:
               noise = torch.abs(torch.randn(inverse_prob.shape, device=self.device))
               inverse_prob = (1 - cfg.noise)*inverse_prob + cfg.noise*noise
-            inverse_prob /= inverse_prob.sum()
+              inverse_prob /= inverse_prob.sum()
             qubit_idx = inverse_prob.argmax() if cfg.greedy else torch.distributions.Categorical(inverse_prob).sample()
             if ret_train_data:
               all_unalloc_probs.append(inverse_prob[qubit_idx])
             qubit_out = free_core_qubits[qubit_idx]
             free_qubits.append(qubit_out)
-            new_allocs = core_allocs.clone()
-            new_allocs[c_i, qubit_out] = 0
-            core_allocs = new_allocs
-            new_core_caps = core_caps.clone()
-            new_core_caps[c_i] += 1
-            core_caps = new_core_caps
-
-      self.pred_model.output_logits(True)
+            core_allocs[c_i, qubit_out] = 0
+            core_caps[c_i] += 1
       
       # Allocate paired qubits first
       while paired_qubits:
