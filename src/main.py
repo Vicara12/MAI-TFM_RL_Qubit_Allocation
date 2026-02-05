@@ -77,12 +77,12 @@ def finetune_model_da(name: str):
 
 if __name__ == "__main__":
   ''' Train the base models with direct allocation '''
-  # allocator = DirectAllocator(
-  #   device='cuda',
-  #   model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
-  #   mode=DirectAllocator.Mode.Fast,
-  # )
-  # train_model_da(allocator, name="da")
+  allocator = DirectAllocator(
+    device='cpu',
+    model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
+    mode=DirectAllocator.Mode.Fast,
+  )
+  train_model_da(allocator, name="da")
 
   ''' Refine a direct allocator model '''
   # finetune_model_da(name="da")
