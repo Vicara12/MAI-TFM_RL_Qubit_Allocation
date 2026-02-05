@@ -659,6 +659,7 @@ class DirectAllocator:
         dropout=train_cfg.dropout,
         allocator=str(train_cfg.circ_sampler)
       ),
+      advantage_extremes = [],
       val_cost = [],
       loss = [],
       cost_loss = [],
@@ -678,7 +679,7 @@ class DirectAllocator:
         pheader = f"\033[2K\r[{it + 1}/{train_cfg.train_iters}]"
         self.iter_timer.start()
 
-        loss, cost_loss, val_loss, vm_ratio = self._train_batch(
+        loss, cost_loss, val_loss, vm_ratio, adv_ext = self._train_batch(
           pheader=pheader,
           optimizer=optimizer,
           opt_cfg=opt_cfg,
@@ -726,6 +727,7 @@ class DirectAllocator:
         data_log['noise'].append(opt_cfg.noise)
         data_log['t'].append(time() - init_t)
         data_log['vm'].append(vm_ratio)
+        data_log['advantage_extremes'].append(adv_ext)
         opt_cfg.noise = max(train_cfg.min_noise, opt_cfg.noise*train_cfg.noise_decrease_factor)
 
     except KeyboardInterrupt as e:
@@ -746,6 +748,7 @@ class DirectAllocator:
     self.pred_model.train()
     n_total = train_cfg.batch_size*train_cfg.group_size
     inv_pen = train_cfg.inv_mov_penalization
+    advantage_extremes = []
 
     while True:
       total_loss = 0
@@ -783,6 +786,7 @@ class DirectAllocator:
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
+          advantage_extremes.append((all_costs.min().item(), all_costs.max().item()))
           n_samps = (train_cfg.batch_size * circuit.n_steps)
           cost_loss = (1 - inv_pen) * torch.sum(all_costs*action_log_probs) / n_samps
           total_cost_loss += cost_loss.item()
@@ -807,7 +811,13 @@ class DirectAllocator:
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-    return total_loss, total_cost_loss, total_valid_loss, valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size)
+    return (
+      total_loss,
+      total_cost_loss,
+      total_valid_loss,
+      valid_moves_ratio/(train_cfg.batch_size*train_cfg.group_size),
+      advantage_extremes[0] if train_cfg.batch_size == 1 else advantage_extremes,
+    )
   
 
   def _validation(self, train_cfg: TrainConfig) -> float:
