@@ -441,7 +441,11 @@ class DirectAllocator:
             # Run pred model over all free qubits in the core to determine which wants to leave the most
             core_qubits = core_allocs[c_i].nonzero().reshape(-1).tolist()
             free_core_qubits = [q for q in core_qubits if q in free_qubits_slice]
-            assert free_core_qubits, f'No available free qubits found for slice {slice_idx} and core {c_i}'
+            if len(free_core_qubits) == 0:
+              if cfg.mask_invalid:
+                assert free_core_qubits, f'No available free qubits found for slice {slice_idx} and core {c_i}'
+              else:
+                continue # If training ignore this core
             qubits = torch.tensor(free_core_qubits, dtype=torch.int, device=self.device).reshape((-1,1))
             qubits = torch.cat([qubits, -1*torch.ones_like(qubits)], dim=-1)
             logits, _, log_pol = self.pred_model(
@@ -737,6 +741,8 @@ class DirectAllocator:
     with open(os.path.join(save_path, "train_data.json"), "w") as f:
       json.dump(data_log, f, indent=2)
   
+  
+  
 
   def _train_batch(
     self,
@@ -767,8 +773,12 @@ class DirectAllocator:
           inv_moves_sum = torch.empty([train_cfg.group_size], device=self.device)
 
           for group_i in range(train_cfg.group_size):
-            opt_n = group_i + batch_i*train_cfg.group_size
-            print(f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} Optimizing {opt_n + 1}/{n_total}", end='')
+            print((
+              f"{pheader} ns={circuit.n_slices} nq={hardware.n_qubits} nc={hardware.n_cores} "
+              f"Batch {batch_i+1}/{train_cfg.batch_size}, "
+              f"optimizing {group_i + 1}/{train_cfg.group_size}"),
+              end=''
+            )
             allocations = torch.empty([circuit.n_slices, circuit.n_qubits], dtype=torch.int)
             log_probs, valid_moves, unalloc_probs = self._allocate(
               allocations=allocations,
@@ -777,20 +787,23 @@ class DirectAllocator:
               hardware=hardware,
               ret_train_data=True,
             )
-            cost = sol_cost(allocations=allocations.detach(), core_con=hardware.core_connectivity)
+            cost = sol_cost(allocations=allocations, core_con=hardware.core_connectivity)
             all_costs[group_i] = cost/(circuit.n_gates_norm + 1)
-            action_log_probs[group_i] = torch.sum(log_probs[valid_moves.detach()])
+            action_log_probs[group_i] = torch.sum(log_probs[valid_moves])
+            num_samples = len(log_probs)
             if unalloc_probs is not None:
               action_log_probs[group_i] += torch.sum(torch.log(unalloc_probs))
-            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves.detach()])
+              num_samples += len(unalloc_probs)
+            action_log_probs[group_i] /= num_samples
+            inv_moves_sum[group_i] = torch.sum(log_probs[~valid_moves])
+            inv_moves_sum[group_i] /= len(log_probs)
             valid_moves_ratio += valid_moves.float().mean().item()
 
           all_costs = (all_costs - all_costs.mean()) / (all_costs.std(unbiased=True) + 1e-8)
           advantage_extremes.append((all_costs.min().item(), all_costs.max().item()))
-          n_samps = (train_cfg.batch_size * circuit.n_steps)
-          cost_loss = (1 - inv_pen) * torch.sum(all_costs*action_log_probs) / n_samps
+          cost_loss = (1 - inv_pen) * torch.sum(all_costs*action_log_probs) / n_total
           total_cost_loss += cost_loss.item()
-          valid_loss = inv_pen * torch.sum(inv_moves_sum) / n_samps
+          valid_loss = inv_pen * torch.sum(inv_moves_sum) / n_total
           total_valid_loss += valid_loss.item()
           loss = cost_loss + valid_loss
           loss.backward()
