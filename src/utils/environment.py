@@ -1,26 +1,49 @@
-from typing import Tuple
+from typing import Optional, Tuple
 import torch
-from customtypes import Circuit, Hardware
+from .customtypes import Circuit, Hardware
+
 
 
 class QubitAllocationEnvironment:
   """This is a flexible environment class for qubit allocation.
   It can be reset with a new circuit and hardware"""
-  def __init__(self, circuit: Circuit, hardware: Hardware, validate_solution=False):
+  def __init__(self, circuit: Optional[Circuit] = None, hardware: Optional[Hardware] = None,
+               validate_solution: bool = False, auto_reset: bool = True):
     self.circuit = circuit
     self.hardware = hardware
     self.validate_solution = validate_solution
-    self.reset()
+    self.allocations = None
+    self.current_core_caps = None
+    self.current_slice_ = 0
+    self.stage = 0
+    self.unallocated_qubits = None
+    self.current_allocation = None
+    self.current_assignment = None
+    if auto_reset and circuit is not None and hardware is not None:
+      self.reset(circuit, hardware)
   
 
-  def reset(self, circuit: Circuit = None, hardware: Hardware = None):
+  def reset(self, circuit: Optional[Circuit] = None, hardware: Optional[Hardware] = None):
     if circuit is not None:
       self.circuit = circuit
     if hardware is not None:
       self.hardware = hardware
-    self.allocations = torch.full(size=(self.circuit.n_slices, self.circuit.n_qubits), fill_value=self.hardware.n_cores, dtype=int)
-    
-    self.current_core_caps = self.hardware.core_capacities
+    if self.circuit is None or self.hardware is None:
+      raise ValueError("Circuit and hardware must be set before resetting the environment")
+    self.allocations = torch.full(
+      size=(self.circuit.n_slices, self.circuit.n_qubits),
+      fill_value=self.hardware.n_cores,
+      dtype=int,
+      device=self.hardware.core_capacities.device,
+    )
+
+    self.current_core_caps = torch.empty(
+      self.hardware.n_cores + 1,
+      dtype=self.hardware.core_capacities.dtype,
+      device=self.hardware.core_capacities.device,
+    )
+    self.current_core_caps[:-1] = self.hardware.core_capacities
+    self.current_core_caps[-1] = self.circuit.n_qubits
     self.current_slice_ = 0
     self.stage = 0
     self.unallocated_qubits = torch.ones(self.circuit.n_qubits, dtype=torch.bool)
@@ -36,8 +59,9 @@ class QubitAllocationEnvironment:
     '''
     # Capacities are recomputed at each decoding step (successive steps within a slice!)
     # based on the current allocation
-    self.current_core_caps = self.hardware.core_capacities \
-        - torch.bincount(cores, minlength=self.hardware.n_cores) 
+    core_fill = torch.bincount(cores, minlength=self.hardware.n_cores)
+    self.current_core_caps[:-1] = self.hardware.core_capacities - core_fill
+    self.current_core_caps[-1] = self.circuit.n_qubits
     
     if self.validate_solution:
       assert self.current_slice_ < self.circuit.n_slices, "Tried to allocate past the end of the circuit"
@@ -117,7 +141,9 @@ class QubitAllocationEnvironment:
 
     # Mask out all cores that have capacity < 1 for single qubits and < 2 for pair qubits
     mask[:, self.current_core_caps < 1] = False
-    mask[is_pair, self.current_core_caps < 2] = False
+    pair_cap_mask = self.current_core_caps < 2
+    if is_pair.any() and (pair_cap_mask).any():
+      mask[is_pair.unsqueeze(1), pair_cap_mask] = False
 
     # Once a qubit is allocated, it cannot be allocated again: mask out all cores for that qubit except their allocation
     # Actively unmask actions that were masked for capacity reasons for allocated qubits
@@ -133,8 +159,8 @@ class QubitAllocationEnvironment:
     # TODO: This being called every time is too much. Perhaps we should store the pair indices
     gates = self.circuit.slice_gates[self.current_slice_]
     if len(gates) == 0:
-      return torch.empty((0, 2), dtype=torch.int64)
-    return torch.as_tensor(gates, dtype=torch.int64)
+      return torch.empty((0, 2), dtype=torch.int64, device=self.current_assignment.device)
+    return torch.as_tensor(gates, dtype=torch.int64, device=self.current_assignment.device)
   
   @property
   def current_slice(self) -> int:
@@ -158,8 +184,9 @@ class QubitAllocationEnvironment:
 class MAQubitAllocationEnvironment(QubitAllocationEnvironment):
   """This wrapper environment class contains functions to map qubit-level to 
   agent-level representations and vice versa, for the multi-agent approach."""
-  def __init__(self, circuit: Circuit, hardware: Hardware, validate_solution=False):
-    super().__init__(circuit, hardware, validate_solution)
+  def __init__(self, circuit: Optional[Circuit] = None, hardware: Optional[Hardware] = None,
+               validate_solution: bool = False, auto_reset: bool = True):
+    super().__init__(circuit, hardware, validate_solution, auto_reset)
     self._agent_mapping_slice = 0 # This is just a flag indicating when to cache the agent mapping
 
 
@@ -232,7 +259,13 @@ class MAQubitAllocationEnvironment(QubitAllocationEnvironment):
       self._agent_mapping_cache = self._agent_mapping()
       self._agent_mapping_slice = self.current_slice_
     return self._agent_mapping_cache
-  
+
+
+
+ENV_REGISTRY = {
+  'qa': QubitAllocationEnvironment,
+  'maqa': MAQubitAllocationEnvironment,
+} 
 
 # ############################# TESTING #############################
 

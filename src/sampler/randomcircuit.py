@@ -1,7 +1,7 @@
 import random
 from typing import Union, Callable
-from sampler.circuitsampler import CircuitSampler
-from utils.customtypes import Circuit
+from .circuitsampler import CircuitSampler
+from ..utils.customtypes import Circuit
 
 
 class RandomCircuit(CircuitSampler):

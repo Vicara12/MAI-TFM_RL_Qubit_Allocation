@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from functools import reduce
 from typing import Tuple, Optional
-from utils.allocutils import core_allocs_to_qubit_allocs
+from src.utils.allocutils import core_allocs_to_qubit_allocs
 
 
 

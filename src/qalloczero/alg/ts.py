@@ -32,6 +32,8 @@ class ModelConfigs:
     embed_size: int = 32
     num_heads: int = 4
     num_layers: int = 4
+    circuit_embds_kwargs: dict = field(default_factory=dict)
+    context_embds_kwargs: dict = field(default_factory=dict)
 
 
 class TSEngine(ABC):

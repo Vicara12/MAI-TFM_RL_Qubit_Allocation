@@ -1,6 +1,6 @@
 import torch
 import random
-from utils.customtypes import Hardware
+from src.utils.customtypes import Hardware
 
 class HardwareSampler:
   def __init__(self, max_nqubits: int, range_ncores: tuple[int,int]):

@@ -8,8 +8,8 @@ from qiskit.circuit.library import (
     PhaseEstimation, LinearFunction
 )
 
-from sampler.circuitsampler import CircuitSampler
-from utils.customtypes import Circuit
+from src.sampler.circuitsampler import CircuitSampler
+from src.utils.customtypes import Circuit
 
 
 switch_cases = [

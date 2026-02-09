@@ -2,7 +2,7 @@ from typing import List, Self, Tuple, Dict, Optional
 from math import sqrt, log
 from dataclasses import dataclass
 import torch
-from qalloczero.alg.ts import TSEngine, TSConfig, TSTrainData
+from src.qalloczero.alg.ts import TSEngine, TSConfig, TSTrainData
 
 
 

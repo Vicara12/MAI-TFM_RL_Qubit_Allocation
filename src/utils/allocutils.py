@@ -2,7 +2,7 @@ import os
 import torch
 from copy import copy
 from typing import Tuple, List
-from utils.customtypes import Hardware, Circuit
+from src.utils.customtypes import Hardware, Circuit
 
 
 def sol_cost(allocations: torch.Tensor, core_con: torch.Tensor) -> int:

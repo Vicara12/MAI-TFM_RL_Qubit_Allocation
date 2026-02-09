@@ -8,15 +8,17 @@ from time import time
 from typing import Self, Tuple, Optional, Any
 from copy import deepcopy
 from dataclasses import dataclass, asdict
-from utils.customtypes import Circuit, Hardware
-from utils.allocutils import sol_cost, get_all_checkpoints
+from src.utils.customtypes import Circuit, Hardware
+from src.utils.allocutils import sol_cost, get_all_checkpoints
 from scipy.stats import ttest_ind
-from utils.timer import Timer
-from utils.memory import get_ram_usage
-from sampler.hardwaresampler import HardwareSampler
-from sampler.circuitsampler import CircuitSampler
-from qalloczero.alg.ts import ModelConfigs
-from qalloczero.models.predmodel import PredictionModel
+from src.utils.timer import Timer
+from src.utils.memory import get_ram_usage
+from src.sampler.hardwaresampler import HardwareSampler
+from src.sampler.circuitsampler import CircuitSampler
+from src.qalloczero.alg.ts import ModelConfigs
+from src.qalloczero.models.predmodel import MAPredictionModel, PredictionModel
+from src.utils.environment import QubitAllocationEnvironment, ENV_REGISTRY
+from src.utils.other_utils import gather_by_index
 
 
 
@@ -52,6 +54,8 @@ class DirectAllocator:
     hardware_sampler: HardwareSampler
     mask_invalid: bool
     dropout: float = 0.0
+    env: str = 'qa'
+
 
 
   def __init__(
@@ -59,15 +63,17 @@ class DirectAllocator:
     device: str = "cpu",
     model_cfg: ModelConfigs = ModelConfigs(),
     mode: Mode = Mode.Sequential,
-  ):
+        ):
+    self.env = 'qa'
     self.model_cfg = model_cfg
-    self.pred_model = PredictionModel(
+    self.pred_model = MAPredictionModel(
       embed_size=model_cfg.embed_size,
-      num_heads=model_cfg.num_heads,
-      num_layers=model_cfg.num_layers,
+      circuit_embds_kwargs=model_cfg.circuit_embds_kwargs,
+      context_embds_kwargs=model_cfg.context_embds_kwargs,
     )
     self.pred_model.to(device)
     self.mode = mode
+    self.env = ENV_REGISTRY[self.env]()
   
 
   @property
@@ -78,8 +84,8 @@ class DirectAllocator:
   def _save_model_cfg(self, path: str):
     params = dict(
       embed_size=self.model_cfg.embed_size,
-      num_heads=self.model_cfg.num_heads,
-      num_layers=self.model_cfg.num_layers,
+      circuit_embds_kwargs=self.model_cfg.circuit_embds_kwargs,
+      context_embds_kwargs=self.model_cfg.context_embds_kwargs,
     )
     with open(os.path.join(path, "optimizer_conf.json"), "w") as f:
       json.dump(params, f, indent=2)
@@ -203,6 +209,21 @@ class DirectAllocator:
     return qubit_set.item(), core.item(), valid
 
 
+  def _allocate_multiagent(
+    self,
+    allocations: torch.Tensor,
+    circ_embs: torch.Tensor,
+    next_interactions: torch.Tensor,
+    alloc_slices: list[tuple[int, list[int], list[tuple[int,int]]]],
+    cfg: DAConfig,
+    hardware: Hardware,
+    ret_train_data: bool,
+    verbose: bool = False,
+  ):
+    raise NotImplementedError("Multi-agent allocation not implemented yet")
+  
+
+
   def _allocate_sequential(
     self,
     allocations: torch.Tensor,
@@ -232,7 +253,8 @@ class DirectAllocator:
       if verbose:
         print((f"\033[2K\r - Optimization step {step+1}/{len(alloc_steps)} "
                f"({int(100*(step+1)/len(alloc_steps))}%)"), end="")
-        
+
+      # TODO: This is handled by the environment in my version  
       if prev_slice != slice_idx:
         prev_core_allocs = core_allocs
         core_allocs = torch.zeros_like(core_allocs)
@@ -549,41 +571,113 @@ class DirectAllocator:
     ret_train_data: bool,
     verbose: bool = False
   ):
-    if self.mode == DirectAllocator.Mode.Sequential:
-      return self._allocate_sequential(
-        allocations=allocations,
-        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
-        next_interactions=circuit.next_interaction.to(self.device).unsqueeze(0),
-        alloc_steps=circuit.alloc_steps,
-        cfg=cfg,
-        hardware=hardware,
-        ret_train_data=ret_train_data,
-        verbose=verbose,
+    device = self.device
+    self.pred_model.output_logits(True)
+    self.env.reset(circuit=circuit, hardware=hardware)
+
+    circ_embs = circuit.embedding.to(device)
+    next_interactions = circuit.next_interaction.to(device)
+    env_device = hardware.core_capacities.device
+
+    if self.env.current_assignment is None:
+      self.env.current_assignment = torch.full(
+        (circuit.n_qubits,), hardware.n_cores, dtype=torch.long, device=env_device
       )
-    elif self.mode == DirectAllocator.Mode.Parallel:
-      return self._allocate_parallel(
-        allocations=allocations,
-        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
-        next_interactions=circuit.next_interaction.to(self.device).unsqueeze(0),
-        alloc_slices=circuit.alloc_slices,
-        cfg=cfg,
-        hardware=hardware,
-        ret_train_data=ret_train_data,
-        verbose=verbose,
+
+    if ret_train_data:
+      all_probs: list[torch.Tensor] = []
+      all_valid: list[torch.Tensor] = []
+
+    def _one_hot_alloc(assignments: torch.Tensor) -> torch.Tensor:
+      one_hot = torch.zeros((hardware.n_cores, hardware.n_qubits), device=device)
+      valid_idx = assignments < hardware.n_cores
+      if valid_idx.any():
+        one_hot[assignments[valid_idx].to(device), torch.arange(hardware.n_qubits, device=device)[valid_idx]] = 1
+      return one_hot
+
+    step = 0
+    # Get the embeddings of all the slices at once
+    adj_matrices = circuit.adj_matrices.unsqueeze(0).to(device)
+    slice_embds = self.pred_model.get_circuit_embds(adj_matrices)
+    
+    while not self.env.finished:
+      slice_idx = self.env.current_slice
+
+      if hasattr(self.env, "agent_mapping"):
+        q_to_agent, num_agents, max_agents = self.env.agent_mapping
+        mask_q = self.env.get_mask()
+        agent_mask, _, _ = self.env.map_qubit_to_agent(mask_q, reducer='all')
+      else:
+        q_to_agent = torch.arange(circuit.n_qubits, device=self.env.current_assignment.device)
+        num_agents = circuit.n_qubits
+        max_agents = circuit.n_qubits
+        agent_mask = self.env.get_mask()
+      agent_mask = agent_mask.to(device)
+      assert agent_mask.shape[0] == num_agents, "Agent mask size mismatch"
+      assert torch.all(agent_mask.any(dim=1)), "At least one agent has no valid action"
+
+      if slice_idx == 0:
+        prev_core_allocs = torch.zeros((hardware.n_cores, hardware.n_qubits), device=device)
+      else:
+        prev_assign = self.env.prev_slice_allocations.to(device)
+        prev_core_allocs = _one_hot_alloc(prev_assign)
+      curr_core_allocs = _one_hot_alloc(self.env.current_assignment.to(device))
+
+      prev_core_allocs = prev_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
+      curr_core_allocs = curr_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
+
+      core_caps_vec = self.env.current_core_caps if self.env.current_core_caps is not None else hardware.core_capacities
+      core_caps = core_caps_vec.to(device).unsqueeze(0).expand(num_agents, -1)
+
+      # Retrieve the embedding for this slice 
+      slice_embd = slice_embds[:, slice_idx, :, :].unsqueeze(1)
+      logits, _, _ = self.pred_model(
+        slice_embd,
+        prev_core_allocs=prev_core_allocs,
+        current_core_allocs=curr_core_allocs,
+        core_capacities=core_caps,
+        core_connectivity=hardware.core_connectivity.to(device),
       )
-    elif self.mode == DirectAllocator.Mode.Fast:
-      return self._allocate_fast(
-        allocations=allocations,
-        circ_embs=circuit.embedding.to(self.device).unsqueeze(0),
-        next_interactions=circuit.next_interaction.to(self.device).unsqueeze(0),
-        alloc_slices=circuit.alloc_slices,
-        cfg=cfg,
-        hardware=hardware,
-        ret_train_data=ret_train_data,
-        verbose=verbose,
+
+      logits_padded = torch.full(
+        (num_agents, hardware.n_cores + 1), float('-inf'), device=device
       )
-    else:
-      raise Exception("Invalid allocation mode")
+      logits_padded[:, :hardware.n_cores] = logits
+      logits_padded[:, hardware.n_cores] = 0.0  # buffer action
+      masked_logits = logits_padded.masked_fill(~agent_mask, float('-inf'))
+
+      pol = torch.softmax(masked_logits, dim=-1)
+      if cfg.noise != 0:
+        noise = torch.abs(torch.randn_like(pol))
+        noise[~agent_mask] = 0
+        pol = (1 - cfg.noise) * pol + cfg.noise * noise
+        pol = pol / pol.sum(dim=-1, keepdim=True)
+
+      actions = pol.argmax(dim=-1) if cfg.greedy else torch.distributions.Categorical(pol).sample()
+      valid = agent_mask.gather(1, actions.unsqueeze(1)).squeeze(1)
+      log_pol = torch.log(pol + 1e-20)
+
+      if ret_train_data:
+        all_probs.append(log_pol.gather(1, actions.unsqueeze(1)).squeeze(1).detach())
+        all_valid.append(valid.detach())
+
+      actions_q = self.env.current_assignment.clone()
+      actions_cpu = actions.to(actions_q.device)
+      for agent_idx in range(num_agents):
+        qs = (q_to_agent == agent_idx).nonzero(as_tuple=False).flatten()
+        actions_q[qs] = actions_cpu[agent_idx]
+
+      self.env.allocate(actions_q)
+      step += 1
+      if verbose:
+        print((f"\033[2K\r - Slice {slice_idx+1}/{circuit.n_slices} step {step}"), end="")
+
+    allocations.copy_(self.env.allocations)
+    if verbose:
+      print('\033[2K\r', end='')
+    if ret_train_data:
+      return torch.cat(all_probs), torch.cat(all_valid), None
+    
 
 
   def optimize(

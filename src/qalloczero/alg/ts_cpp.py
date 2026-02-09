@@ -2,8 +2,8 @@ from typing import Tuple, Optional
 from os import remove
 from time import time
 import torch
-from qalloczero.alg.ts import (TSEngine, TSConfig, TSTrainData)
-from qalloczero.alg.ts_cpp_engine.build.ts_cpp_engine import (
+from src.qalloczero.alg.ts import (TSEngine, TSConfig, TSTrainData)
+from src.qalloczero.alg.ts_cpp_engine.build.ts_cpp_engine import (
   TSEngine as TSCppEngineInterface,
   TseOptConfig as TseCppOptConfig,
   TseTrainData as TseCppTrainData

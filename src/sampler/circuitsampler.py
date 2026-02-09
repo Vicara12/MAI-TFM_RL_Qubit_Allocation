@@ -1,7 +1,7 @@
 from abc import abstractmethod, ABC
 from typing import Tuple, Union
 import torch
-from utils.customtypes import Circuit
+from ..utils.customtypes import Circuit
 
 
 class CircuitSampler(ABC):

@@ -1,6 +1,6 @@
 import random
-from utils.customtypes import Circuit
-from sampler.circuitsampler import CircuitSampler
+from src.utils.customtypes import Circuit
+from src.sampler.circuitsampler import CircuitSampler
 
 
 class MixedCircuitSampler(CircuitSampler):

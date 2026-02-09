@@ -1,12 +1,13 @@
 import torch
 from random import randint
-from sampler.hardwaresampler import HardwareSampler
-from sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCircuit
-from sampler.mixedcircuitsampler import MixedCircuitSampler
-from qalloczero.alg.directalloc import DirectAllocator
-from qalloczero.scripts.test_compare import validate, benchmark, compare_w_sota
-from qalloczero.alg.ts import ModelConfigs
-from utils.customtypes import Hardware
+from src.sampler.hardwaresampler import HardwareSampler
+from src.sampler.randomcircuit import RandomCircuit, HotRandomCircuit, DenseRandomCircuit
+from src.sampler.mixedcircuitsampler import MixedCircuitSampler
+from src.qalloczero.alg.directalloc import DirectAllocator
+from src.qalloczero.scripts.test_compare import validate, benchmark, compare_w_sota
+from src.qalloczero.alg.ts import ModelConfigs
+from src.utils.customtypes import Hardware
+from src.utils.environment import QubitAllocationEnvironment
 
 
 def train_model_da(allocator, name: str):
@@ -37,6 +38,7 @@ def train_model_da(allocator, name: str):
     mask_invalid=True,
     hardware_sampler=HardwareSampler(max_nqubits=16, range_ncores=[2,8]),
     dropout=0.0,
+    env = 'qa'
   )
   allocator.train(train_cfg)
 

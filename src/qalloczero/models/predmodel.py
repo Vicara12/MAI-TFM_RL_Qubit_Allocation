@@ -1,7 +1,73 @@
 from typing import Tuple
+from src.qalloczero.models.encoder import QubitContextTransformer, QubitEmbedding, QAInitEmbedding
+from src.qalloczero.models.context_embedding import QAContextEmbedding
 import torch
 
 
+class MAPredictionModel(torch.nn.Module):
+  ''' Model used to predict the most likely core allocation for a given state.
+
+  This model is used to predict the most likely core allocation for a given state, which is then
+  used as input for the value function predictor. The model is trained with cross entropy loss on
+  the core allocation predicted by the policy model.
+  '''
+
+  def __init__(
+    self,
+    embed_size: int,
+    circuit_embds_kwargs = {},
+    context_embds_kwargs = {},
+  ):
+    super().__init__()
+    #TODO: Change number of qubits to max num qubits (for the embeddings) 
+    self.circuit_embds = QAInitEmbedding(embed_dim=embed_size, num_qubits=20, **circuit_embds_kwargs)  
+    self.context_embds = QAContextEmbedding(embed_dim=embed_size, max_qubits=20,**context_embds_kwargs)
+    self.output_logits_ = False
+    
+  def set_dropout(self, p: float):
+    for module in self.modules():
+        # 1. Update standard Dropout layers (in Sequential & Transformers)
+        if isinstance(module, torch.nn.Dropout):
+            module.p = p
+        # 2. Update MultiheadAttention layers (attribute based)
+        if isinstance(module, torch.nn.MultiheadAttention):
+            module.dropout = p
+  
+  def output_logits(self, value: bool):
+    self.output_logits_ = value
+  
+  def get_circuit_embds(self, adj_matrices: torch.Tensor) -> torch.Tensor:
+    return self.circuit_embds(adj_matrices)
+
+  def forward(
+      self,
+      slice_embds: torch.Tensor,
+      prev_core_allocs: torch.Tensor,
+      current_core_allocs: torch.Tensor,
+      core_capacities: torch.Tensor,
+      core_connectivity: torch.Tensor,
+  ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    context_embds = self.context_embds(
+      slice_embds, 
+      prev_core_allocs,
+      current_core_allocs,
+      core_capacities, 
+      core_connectivity,
+      )
+
+    key_embs, q_embs = self._get_embeddings(inputs, qubits)
+    logits = self._project(key_embs, q_embs) # [B,C]
+    vals = torch.tensor([[1] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
+    log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
+    if self.output_logits_:
+      return logits, vals, log_probs
+    probs = torch.softmax(logits, dim=-1) # [B,C]
+    #TODO: We have to pass all slice adjacency matrices to this model
+    # I recall we have them in the environment
+    self.qubit_embds
+
+    return logits, vals
 
 class PredictionModel(torch.nn.Module):
   ''' For each qubit and time slice, output core allocation probability density and value of state.

@@ -1,14 +1,14 @@
 import torch
 import json
 import pandas as pd
-from utils.timer import Timer
-from utils.customtypes import Hardware, Circuit
-from sampler.randomcircuit import RandomCircuit
-from utils.plotter import drawCircuit
-from utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
-from qalloczero.alg.ts import TSConfig
-# from qalloczero.alg.alphazero import AlphaZero
-from qalloczero.alg.directalloc import DirectAllocator
+from src.utils.timer import Timer
+from src.utils.customtypes import Hardware, Circuit
+from src.sampler.randomcircuit import RandomCircuit
+from src.utils.plotter import drawCircuit
+from src.utils.allocutils import check_sanity, swaps_from_alloc, count_swaps, check_sanity_swap, get_all_checkpoints
+from src.qalloczero.alg.ts import TSConfig
+# from src.qalloczero.alg.alphazero import AlphaZero
+from src.qalloczero.alg.directalloc import DirectAllocator
 
 
 def validate():

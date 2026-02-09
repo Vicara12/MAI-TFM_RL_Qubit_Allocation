@@ -1,13 +1,13 @@
 import torch
-from utils.timer import Timer
-from utils.allocutils import sol_cost
-from sampler.randomcircuit import RandomCircuit
-from qalloczero.models.predmodel import PredictionModel
-from utils.customtypes import Hardware
-from utils.plotter import drawQubitAllocation
-from qalloczero.alg.alphazero import AlphaZero
-from qalloczero.alg.ts import TSConfig
-from qalloczero.alg.ts_cpp import TSCppEngine
+from src.utils.timer import Timer
+from src.utils.allocutils import sol_cost
+from src.sampler.randomcircuit import RandomCircuit
+from src.qalloczero.models.predmodel import PredictionModel
+from src.utils.customtypes import Hardware
+from src.utils.plotter import drawQubitAllocation
+from src.qalloczero.alg.alphazero import AlphaZero
+from src.qalloczero.alg.ts import TSConfig
+from src.qalloczero.alg.ts_cpp import TSCppEngine
 
 
 
