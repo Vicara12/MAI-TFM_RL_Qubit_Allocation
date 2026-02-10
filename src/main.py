@@ -38,7 +38,6 @@ def train_model_da(allocator, name: str):
     mask_invalid=True,
     hardware_sampler=HardwareSampler(max_nqubits=16, range_ncores=[2,8]),
     dropout=0.0,
-    env = 'qa'
   )
   allocator.train(train_cfg)
 
@@ -83,6 +82,7 @@ if __name__ == "__main__":
     device='cpu',
     model_cfg=ModelConfigs(embed_size=64, num_heads=2, num_layers=2),
     mode=DirectAllocator.Mode.Fast,
+    env='maqa',
   )
   train_model_da(allocator, name="da")
 

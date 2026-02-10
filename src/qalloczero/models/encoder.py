@@ -152,7 +152,6 @@ class QubitContextTransformer(nn.Module):
         return x.view(B, Q, T, d).permute(0, 2, 1, 3)  # [batch, num_slices, num_qubits, hidden_dim] 
 
 
-
 class QubitContextLookahead(nn.Module):
     """Alternative to QubitContextTransformer using lookahead weights and a GNN.
     """

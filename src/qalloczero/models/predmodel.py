@@ -1,6 +1,7 @@
 from typing import Tuple
 from src.qalloczero.models.encoder import QubitContextTransformer, QubitEmbedding, QAInitEmbedding
 from src.qalloczero.models.context_embedding import QAContextEmbedding
+from src.qalloczero.models.decoder import QADecoder
 import torch
 
 
@@ -17,11 +18,14 @@ class MAPredictionModel(torch.nn.Module):
     embed_size: int,
     circuit_embds_kwargs = {},
     context_embds_kwargs = {},
+    decoder_kwargs = {},
   ):
     super().__init__()
     #TODO: Change number of qubits to max num qubits (for the embeddings) 
     self.circuit_embds = QAInitEmbedding(embed_dim=embed_size, num_qubits=20, **circuit_embds_kwargs)  
-    self.context_embds = QAContextEmbedding(embed_dim=embed_size, max_qubits=20,**context_embds_kwargs)
+    self.context_embds = QAContextEmbedding(embed_dim=embed_size, max_qubits=20, **context_embds_kwargs)
+    self.decoder = QADecoder(embed_dim=embed_size, **decoder_kwargs)
+    self.conflict_handler = None #TODO: implement conflict handler to deal with the fact that we might have multiple qubits to allocate at the same time
     self.output_logits_ = False
     
   def set_dropout(self, p: float):
@@ -49,31 +53,27 @@ class MAPredictionModel(torch.nn.Module):
       core_connectivity: torch.Tensor,
       adj_matrix: torch.Tensor,
       action_mask: torch.Tensor,
-  ) -> Tuple[torch.Tensor, torch.Tensor]:
+  ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
-    context_embds = self.context_embds(
-      slice_embds, 
+    agent_embeds, agent_mask, _, final_action_mask = self.context_embds(
+      slice_embds,
       prev_core_allocs,
       current_core_allocs,
-      core_capacities, 
+      core_capacities,
       core_size,
       core_connectivity,
       adj_matrix,
-      action_mask
-      )
+      action_mask,
+    )
 
-    key_embs, q_embs = self._get_embeddings(inputs, qubits)
-    logits = self._project(key_embs, q_embs) # [B,C]
-    vals = torch.tensor([[1] for _ in range(qubits.shape[0])], device=qubits.device) # Placeholder
-    log_probs = torch.log_softmax(logits, dim=-1) # [B,C]
+    logits, final_mask = self.decoder(agent_embeds, final_action_mask, agent_mask)
+    log_probs = torch.log_softmax(logits, dim=-1)
+
     if self.output_logits_:
-      return logits, vals, log_probs
-    probs = torch.softmax(logits, dim=-1) # [B,C]
-    #TODO: We have to pass all slice adjacency matrices to this model
-    # I recall we have them in the environment
-    self.qubit_embds
-
-    return logits, vals
+      return logits, final_mask, log_probs
+    
+    probs = torch.softmax(logits, dim=-1)
+    return probs, final_mask, log_probs
 
 class PredictionModel(torch.nn.Module):
   ''' For each qubit and time slice, output core allocation probability density and value of state.

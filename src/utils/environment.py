@@ -199,7 +199,8 @@ class MAQubitAllocationEnvironment(QubitAllocationEnvironment):
     out_shape[q_dim] = max_agents
 
     if reducer in ('any', 'all'):
-      out = torch.zeros(out_shape, device=tensor.device, dtype=torch.bool)
+      # Use integer accumulation; scatter_add_ does not support bool destination.
+      out = torch.zeros(out_shape, device=tensor.device, dtype=torch.int)
       out.scatter_add_(q_dim, idx, tensor.to(torch.int))
       counts = torch.bincount(q_to_agent, minlength=max_agents).to(tensor.device).clamp_min(1)
       shape = [1]*tensor.ndim
@@ -233,7 +234,8 @@ class MAQubitAllocationEnvironment(QubitAllocationEnvironment):
     """Returns (q_to_agent, num_agents, max_agents) for current slice."""
     
     n_q = self.circuit.n_qubits
-    max_agents = n_q - 1
+    # Upper bound for padding; use n_q to cover the no-pair case cleanly.
+    max_agents = n_q
     pairs = self.pair_indices  # [P,2] or [0,2]
 
     if pairs.numel() == 0:
