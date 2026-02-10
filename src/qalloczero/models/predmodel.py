@@ -45,7 +45,10 @@ class MAPredictionModel(torch.nn.Module):
       prev_core_allocs: torch.Tensor,
       current_core_allocs: torch.Tensor,
       core_capacities: torch.Tensor,
+      core_size: torch.Tensor,
       core_connectivity: torch.Tensor,
+      adj_matrix: torch.Tensor,
+      action_mask: torch.Tensor,
   ) -> Tuple[torch.Tensor, torch.Tensor]:
 
     context_embds = self.context_embds(
@@ -53,7 +56,10 @@ class MAPredictionModel(torch.nn.Module):
       prev_core_allocs,
       current_core_allocs,
       core_capacities, 
+      core_size,
       core_connectivity,
+      adj_matrix,
+      action_mask
       )
 
     key_embs, q_embs = self._get_embeddings(inputs, qubits)

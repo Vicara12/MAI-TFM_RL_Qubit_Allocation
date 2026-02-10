@@ -209,21 +209,6 @@ class DirectAllocator:
     return qubit_set.item(), core.item(), valid
 
 
-  def _allocate_multiagent(
-    self,
-    allocations: torch.Tensor,
-    circ_embs: torch.Tensor,
-    next_interactions: torch.Tensor,
-    alloc_slices: list[tuple[int, list[int], list[tuple[int,int]]]],
-    cfg: DAConfig,
-    hardware: Hardware,
-    ret_train_data: bool,
-    verbose: bool = False,
-  ):
-    raise NotImplementedError("Multi-agent allocation not implemented yet")
-  
-
-
   def _allocate_sequential(
     self,
     allocations: torch.Tensor,
@@ -575,8 +560,6 @@ class DirectAllocator:
     self.pred_model.output_logits(True)
     self.env.reset(circuit=circuit, hardware=hardware)
 
-    circ_embs = circuit.embedding.to(device)
-    next_interactions = circuit.next_interaction.to(device)
     env_device = hardware.core_capacities.device
 
     if self.env.current_assignment is None:
@@ -617,26 +600,31 @@ class DirectAllocator:
       assert torch.all(agent_mask.any(dim=1)), "At least one agent has no valid action"
 
       if slice_idx == 0:
-        prev_core_allocs = torch.zeros((hardware.n_cores, hardware.n_qubits), device=device)
+        prev_core_allocs = torch.full((hardware.n_qubits,), hardware.n_cores, device=device)
       else:
         prev_assign = self.env.prev_slice_allocations.to(device)
         prev_core_allocs = _one_hot_alloc(prev_assign)
-      curr_core_allocs = _one_hot_alloc(self.env.current_assignment.to(device))
+      #curr_core_allocs = _one_hot_alloc(self.env.current_assignment.to(device))
+      curr_core_allocs = self.env.current_assignment.to(device)
 
-      prev_core_allocs = prev_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
-      curr_core_allocs = curr_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
+      #prev_core_allocs = prev_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
+      #curr_core_allocs = curr_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
 
       core_caps_vec = self.env.current_core_caps if self.env.current_core_caps is not None else hardware.core_capacities
-      core_caps = core_caps_vec.to(device).unsqueeze(0).expand(num_agents, -1)
+      core_caps = core_caps_vec.to(device) #.unsqueeze(0).expand(num_agents, -1)
 
       # Retrieve the embedding for this slice 
-      slice_embd = slice_embds[:, slice_idx, :, :].unsqueeze(1)
+      # NOTE: remember to be consistent with the batch dimension
+      slice_embd = slice_embds[:, slice_idx, :, :]
       logits, _, _ = self.pred_model(
         slice_embd,
-        prev_core_allocs=prev_core_allocs,
-        current_core_allocs=curr_core_allocs,
+        prev_core_allocs=prev_core_allocs.unsqueeze(0),
+        current_core_allocs=curr_core_allocs.unsqueeze(0),
         core_capacities=core_caps,
+        core_size=hardware.core_capacities.to(device),
         core_connectivity=hardware.core_connectivity.to(device),
+        adj_matrix=adj_matrices[:, slice_idx, :, :].to(device),
+        action_mask=agent_mask
       )
 
       logits_padded = torch.full(

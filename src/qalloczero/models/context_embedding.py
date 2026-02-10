@@ -32,11 +32,11 @@ class QAContextEmbedding(nn.Module):
         # so we've already called those, now we just need to retrieve the index we need
         layer_kwargs = dict(communication_layer_kwargs)
 
-        # self.grouper = DynamicAgentGrouper(
-        #     max_qubits=max_qubits, 
-        #     embed_dim=embed_dim, 
-        #     distance_matrix=distance_matrix
-        # )
+        self.grouper = DynamicAgentGrouper(
+            max_qubits=max_qubits, 
+            embed_dim=embed_dim, 
+            distance_matrix=distance_matrix
+        )
 
         self.core_feature_enc = CoreFeatureEncoder(
             embed_dim=embed_dim,
@@ -93,17 +93,24 @@ class QAContextEmbedding(nn.Module):
             core_capacities: torch.Tensor,
             core_size: torch.Tensor,
             core_connectivity: torch.Tensor = None,
-            core_mask: torch.Tensor = None,
+            adj_matrix: torch.Tensor = None,
+            action_mask: torch.Tensor = None,
         ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         
         # Gather the agent embeddings
         agent_embeds = self._agent_state_embedding(slice_embds)  # [B, Q, d] -> [B, Agents, C, d]
 
         # Agent embeddings
-        grouped_agent_emds, agent_mask, agent_demands, final_action_mask = self.grouper(agent_embeds)  # [B, Q, d] -> [B, Agents, C, d]
+        grouped_agent_emds, agent_mask, agent_demands, final_action_mask = self.grouper(
+            agent_embeds, 
+            prev_core_allocs=prev_core_allocs,
+            current_core_allocs=current_core_allocs,
+            core_connectivity=core_connectivity,
+            adj_matrix=adj_matrix,
+            action_mask=action_mask)  # [B, Q, d] -> [B, Agents, C, d]
 
         # Gather core embeddings (capacity)
-        core_embeds = self.core_feature_enc(core_capacities, core_size=core_size, core_mask=core_mask)  # [B, C, d]
+        core_embeds = self.core_feature_enc(core_capacities, core_size=core_size)  # [B, C, d]
 
         agent_embeds = grouped_agent_emds + core_embeds.unsqueeze(1)  # [B, Agents, C, d]
 

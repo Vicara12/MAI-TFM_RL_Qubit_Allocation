@@ -113,7 +113,6 @@ class QubitAllocationEnvironment:
 
   def _get_reward(self, cores) -> int:
     """Reward is negative of the cost, so that the agent learns to minimize cost."""
-    # Compute the reward
     if self.current_slice_ == 0:
       alloc_cost = 0
     else:
