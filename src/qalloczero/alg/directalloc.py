@@ -11,6 +11,7 @@ from dataclasses import dataclass, asdict
 from src.utils.customtypes import Circuit, Hardware
 from src.utils.allocutils import sol_cost, get_all_checkpoints
 from scipy.stats import ttest_ind
+from src.utils.mapping import map_agent_to_qubit
 from src.utils.timer import Timer
 from src.utils.memory import get_ram_usage
 from src.sampler.hardwaresampler import HardwareSampler
@@ -599,47 +600,34 @@ class DirectAllocator:
       all_probs: list[torch.Tensor] = []
       all_valid: list[torch.Tensor] = []
 
-    # def _one_hot_alloc(assignments: torch.Tensor) -> torch.Tensor:
-    #   one_hot = torch.zeros((hardware.n_cores, hardware.n_qubits), device=device)
-    #   valid_idx = assignments < hardware.n_cores
-    #   if valid_idx.any():
-    #     one_hot[assignments[valid_idx].to(device), torch.arange(hardware.n_qubits, device=device)[valid_idx]] = 1
-    #   return one_hot
 
     step = 0
     # Get the embeddings of all the slices at once
+    #TODO: We'll remove the batch dim for the whole pipeline
     adj_matrices = circuit.adj_matrices.unsqueeze(0).to(device)
     slice_embds = self.pred_model.get_circuit_embds(adj_matrices)
     
     while not self.env.finished:
       slice_idx = self.env.current_slice
 
-      # Reshape the mask to the number of agents
-      # if hasattr(self.env, "agent_mapping"):
-      #   mask_q = self.env.get_mask()
-      #   action_mask, num_agents, max_agents = self.env.map_qubit_to_agent(mask_q, reducer='all')
-      # else:
-      q_to_agent = torch.arange(circuit.n_qubits, device=self.env.current_assignment.device)
-      num_agents = circuit.n_qubits
-      max_agents = num_agents
-      action_mask = self.env.get_mask()
-      action_mask = action_mask.to(device)
-      assert action_mask.shape[0] == max_agents, "Agent mask size mismatch"
-      #assert torch.all(action_mask.any(dim=1)), "At least one agent has no valid action"
+      # Use qubit-level mask; agent grouping is handled inside the model/grouper.
+      if hasattr(self.env, "agent_mapping"):
+        q_to_agent, num_agents, max_agents = self.env.agent_mapping
+      else:
+        q_to_agent = torch.arange(circuit.n_qubits, device=self.env.current_assignment.device)
+        num_agents = circuit.n_qubits
+        max_agents = num_agents
+      action_mask = self.env.get_mask().to(device)
 
       if slice_idx == 0:
         prev_core_allocs = torch.full((hardware.n_qubits,), hardware.n_cores, device=device)
       else:
         prev_core_allocs = self.env.prev_slice_allocations.to(device)
-        #prev_core_allocs = _one_hot_alloc(prev_assign)
-      #curr_core_allocs = _one_hot_alloc(self.env.current_assignment.to(device))
+
       curr_core_allocs = self.env.current_assignment.to(device)
 
-      #prev_core_allocs = prev_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
-      #curr_core_allocs = curr_core_allocs.unsqueeze(0).expand(num_agents, -1, -1)
-
       core_caps_vec = self.env.current_core_caps if self.env.current_core_caps is not None else hardware.core_capacities
-      core_caps = core_caps_vec.to(device) #.unsqueeze(0).expand(num_agents, -1)
+      core_caps = core_caps_vec.to(device)
 
       # Retrieve the embedding for this slice 
       # NOTE: remember to be consistent with the batch dimension
@@ -654,10 +642,18 @@ class DirectAllocator:
         core_size=hardware.core_capacities.to(device),
         core_connectivity=hardware.core_connectivity.to(device),
         adj_matrix=adj_matrices[:, slice_idx, :, :].to(device),
-        action_mask=action_mask
+        action_mask=action_mask,
+        q_to_agent=q_to_agent,
+        max_agents=max_agents,
       )
-       # Keep only real agents to avoid padded rows turning into NaNs
+      # Keep only real agents to avoid padded rows turning into NaNs
       logits = logits[:, :num_agents, :]
+      final_mask = final_mask[:, :num_agents, :]
+
+      # Ensure every agent has at least the buffer action valid to avoid NaNs
+      assert (~final_mask.any(dim=-1)).all().item() == False, \
+        "Invalid final mask with no valid actions for some agents"
+
       pol = torch.softmax(logits, dim=-1)
       
       # Add some noise for exploration 
@@ -670,8 +666,17 @@ class DirectAllocator:
       actions = pol.argmax(dim=-1) if cfg.greedy else torch.distributions.Categorical(pol).sample()
       log_pol = torch.log(pol + 1e-20)
 
+      # TODO: Let's call conflict handler. It will return the valid actions
+      # Problem: how can I use the conflicts in the reward?
+
+
       #TODO: this is where we map agents to qubits again
-      q_actions = self.env.map_agent_to_qubit(actions.to(self.env))
+      buffer_idx = actions.shape[-1] - 1
+      padded_actions = torch.full((actions.shape[0], max_agents), buffer_idx, device=actions.device, dtype=actions.dtype)
+      padded_actions[:, :num_agents] = actions
+      q_actions, _, _ = map_agent_to_qubit(padded_actions.to(env_device), q_to_agent.to(env_device), max_agents)
+
+
 
       #TODO: can no longer compute valid actions like this
       # because there might be additional conflicts that weren't masked

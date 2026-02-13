@@ -383,13 +383,18 @@ class DynamicAgentGrouper(nn.Module):
     Groups qubits into pairs and singletons.
     Returns a padded tensor of agents
         """
-    def __init__(self, max_qubits: int, embed_dim: int, distance_matrix: Optional[torch.Tensor]):
+    def __init__(self, max_qubits: int, embed_dim: int, distance_matrix: Optional[torch.Tensor], concat_max_members: int = 2):
         super().__init__()
+
+        self.concat_max_members = concat_max_members
 
         # project scalar distance to embedding vector
         self.dist_proj = nn.Linear(1, embed_dim, bias=False)
 
         self.binder = AgentBinder(embed_dim)
+
+        # Projection after concatenating member embeddings
+        self.concat_proj = nn.Linear(embed_dim * self.concat_max_members, embed_dim)
 
         # distance matrix is optional; fall back to the one passed at runtime
         if distance_matrix is not None:
@@ -433,6 +438,119 @@ class DynamicAgentGrouper(nn.Module):
         counts = counts.to(batch_idx.device)
         offsets = torch.repeat_interleave(torch.cumsum(counts, dim=0) - counts, counts)
         return torch.arange(batch_idx.size(0), device=batch_idx.device) - offsets
+
+
+    def agents_to_qubits(self, tensor: torch.Tensor, q_to_agent: torch.Tensor, max_agents: int) -> torch.Tensor:
+        """Broadcast agent-dim tensor back to qubit dim using ``q_to_agent`` .
+        """
+        if q_to_agent.dim() == 1:
+            q_to_agent = q_to_agent.unsqueeze(0)
+
+        if tensor.shape[0] != q_to_agent.shape[0]:
+            raise ValueError("Batch size mismatch between tensor and q_to_agent")
+
+        a_dim = next(i for i, s in enumerate(tensor.shape) if s == max_agents)
+
+        view_shape = [q_to_agent.shape[0]] + [1] * (a_dim - 1) + [q_to_agent.shape[1]] + [1] * (tensor.ndim - a_dim - 1)
+        idx = q_to_agent.view(view_shape)
+        idx = idx.expand(*tensor.shape[:a_dim], q_to_agent.shape[1], *tensor.shape[a_dim + 1:])
+        return torch.gather(tensor, a_dim, idx)
+
+
+    def group_qubits_to_agents(
+        self,
+        qubit_embeds: torch.Tensor,
+        adj_matrix: Optional[torch.Tensor] = None,
+        prev_core_allocs: Optional[torch.Tensor] = None,
+        current_core_allocs: Optional[torch.Tensor] = None,
+        core_connectivity: Optional[torch.Tensor] = None,
+        action_mask: Optional[torch.Tensor] = None,
+        q_to_agent: Optional[torch.Tensor] = None,
+        max_agents: Optional[int] = None,
+    ):
+        """Group qubits into agents and emit the mapping for reverse broadcasts.
+
+        Returns agent tensors plus ``q_to_agent`` and ``max_agents`` so that
+        ``agents_to_qubits`` can later copy actions back to the qubit dimension.
+        """
+        if qubit_embeds.dim() == 2:
+            qubit_embeds = qubit_embeds.unsqueeze(0)
+        B, Q, D = qubit_embeds.shape
+        device = qubit_embeds.device
+
+        num_cores = core_connectivity.size(0)
+
+        # Distances and binding
+        qubit_core_dist = self._get_dist(prev_core_allocs, core_connectivity)  # [B, Q, C]
+        dist_embeds = self.dist_proj(qubit_core_dist.unsqueeze(-1))
+        q_expanded = qubit_embeds.unsqueeze(2).expand(-1, -1, num_cores, -1)
+        bound_embeds = self.binder(q_expanded, dist_embeds)  # [B, Q, C, d]
+
+        env_mask = action_mask if action_mask is not None else torch.ones(B, Q, num_cores + 1, dtype=torch.bool, device=device)
+        if env_mask.dim() == 2:
+            env_mask = env_mask.unsqueeze(0)
+        if env_mask.dim() == 3 and env_mask.shape[0] == 1 and B > 1:
+            env_mask = env_mask.expand(B, -1, -1)
+
+        # Explicit mapping path is deprecated here; rely on dynamic grouping to build the mapping.
+        if q_to_agent is not None or max_agents is not None:
+            raise ValueError("Explicit q_to_agent/max_agents mapping is no longer handled here; use dynamic grouping and the returned mapping instead.")
+
+        # Dynamic pairing path
+        if adj_matrix is None:
+            adj_matrix = torch.zeros(B, Q, Q, device=device, dtype=bound_embeds.dtype)
+        elif adj_matrix.dim() == 2:
+            adj_matrix = adj_matrix.unsqueeze(0)
+
+        pair_mask = torch.triu(adj_matrix, diagonal=1) > 0
+        b_idx, q1, q2 = torch.where(pair_mask)
+
+        unassigned = current_core_allocs[b_idx, q1] == num_cores
+        b_idx_p, q1, q2 = b_idx[unassigned], q1[unassigned], q2[unassigned]
+        pair_agents = bound_embeds[b_idx_p, q1] + bound_embeds[b_idx_p, q2]
+
+        is_used = torch.zeros((B, Q), dtype=torch.bool, device=device)
+        is_used[b_idx_p, q1] = True
+        is_used[b_idx_p, q2] = True
+        b_idx_s, q_s = torch.where(~is_used)
+        single_agents = bound_embeds[b_idx_s, q_s]
+
+        pair_action_mask = env_mask[b_idx_p, q1] if pair_agents.numel() > 0 else bound_embeds.new_zeros((0, num_cores + 1), dtype=torch.bool)
+        single_action_mask = env_mask[b_idx_s, q_s] if single_agents.numel() > 0 else bound_embeds.new_zeros((0, num_cores + 1), dtype=torch.bool)
+
+        pair_counts = torch.bincount(b_idx_p, minlength=B).to(device)
+        single_counts = torch.bincount(b_idx_s, minlength=B).to(device)
+        agent_counts = pair_counts + single_counts
+        max_agents_out = int(agent_counts.max().item()) if agent_counts.numel() > 0 else 0
+
+        agent_embeds = bound_embeds.new_zeros(B, max_agents_out, num_cores, D)
+        agent_demands = bound_embeds.new_zeros(B, max_agents_out)
+        final_action_mask = torch.zeros(B, max_agents_out, num_cores + 1, dtype=torch.bool, device=device)
+        q_to_agent_out = torch.full((B, Q), 0, dtype=torch.long, device=device)
+
+        if max_agents_out == 0:
+            agent_mask = agent_demands > 0
+            return agent_embeds, agent_mask, agent_demands, final_action_mask, q_to_agent_out, max_agents_out
+
+        if pair_agents.numel() > 0:
+            pair_pos = self._batch_positions(b_idx_p, pair_counts)
+            agent_embeds[b_idx_p, pair_pos] = pair_agents
+            agent_demands[b_idx_p, pair_pos] = 2.0
+            final_action_mask[b_idx_p, pair_pos] = pair_action_mask
+            q_to_agent_out[b_idx_p, q1] = pair_pos
+            q_to_agent_out[b_idx_p, q2] = pair_pos
+
+        if single_agents.numel() > 0:
+            single_pos = self._batch_positions(b_idx_s, single_counts)
+            final_pos = single_pos + pair_counts.to(single_pos.device)[b_idx_s]
+            agent_embeds[b_idx_s, final_pos] = single_agents
+            agent_demands[b_idx_s, final_pos] = 1.0
+            final_action_mask[b_idx_s, final_pos] = single_action_mask
+            q_to_agent_out[b_idx_s, q_s] = final_pos
+
+        agent_mask = agent_demands > 0
+
+        return agent_embeds, agent_mask, agent_demands, final_action_mask, q_to_agent_out, max_agents_out
     
 
     def forward(
@@ -443,117 +561,19 @@ class DynamicAgentGrouper(nn.Module):
         current_core_allocs: Optional[torch.Tensor] = None,
         core_connectivity: Optional[torch.Tensor] = None,
         action_mask: Optional[torch.Tensor] = None,
+        q_to_agent: Optional[torch.Tensor] = None,
+        max_agents: Optional[int] = None,
     ):
-        """
-        Simplified, batch-1 friendly grouper.
-
-        Args:
-            qubit_embeds: [B, Q, d] or [Q, d] (B defaults to 1)
-            adjacency: [Q, Q] or [B, Q, Q] for the current slice
-            prev_core_allocs: [B, Q] or [Q] with current core indices; values >= num_cores = buffer
-            current_core_allocs: same shape as prev_core_allocs; used to filter already placed qubits
-            core_connectivity: [C, C] distance matrix (falls back to the buffer if provided in __init__)
-            action_mask: [B, Q, C+1] boolean action mask per qubit (optional)
-        Returns:
-            agent_embeds: [B, Agents, C, d]
-            agent_mask: [B, Agents]
-            agent_demands: [B, Agents] (2 for pairs, 1 for singles)
-            final_action_mask: [B, Agents, C+1]
-        """
-        # TODO: Do we really need padding? Batch size is always 1
-
-        # Normalize shapes to always include batch dim (B=1 by default)
-        if qubit_embeds.dim() == 2:
-            qubit_embeds = qubit_embeds.unsqueeze(0)
-        B, Q, D = qubit_embeds.shape
-        device = qubit_embeds.device
-
-        # core_connectivity = core_connectivity if core_connectivity is not None else self.distance_matrix
-        # if core_connectivity is None:
-        #     raise ValueError("core_connectivity must be provided (either in __init__ or at call time).")
-        num_cores = core_connectivity.size(0)
-
-        # all unassigned -> buffer index = num_cores TODO: Maybe not necessary
-        # if prev_core_allocs is None:
-        #     prev_core_allocs = torch.full((B, Q), num_cores, device=device, dtype=torch.long)
-        # elif prev_core_allocs.dim() == 1:
-        #     prev_core_allocs = prev_core_allocs.unsqueeze(0)
-
-        # if current_core_allocs is None:
-        #     current_core_allocs = torch.full((B, Q), num_cores, device=device, dtype=torch.long)
-        # elif current_core_allocs.dim() == 1:
-        #     current_core_allocs = current_core_allocs.unsqueeze(0)
-
-        # Distances
-        # qubits in buffer have distance 0 to all cores
-        qubit_core_dist = self._get_dist(prev_core_allocs, core_connectivity)  # [B, Q, C]
-        dist_embeds = self.dist_proj(qubit_core_dist.unsqueeze(-1))
-        q_expanded = qubit_embeds.unsqueeze(2).expand(-1, -1, num_cores, -1)
-        bound_embeds = self.binder(q_expanded, dist_embeds)  # [B, Q, C, d]
-
-        # handle action mask
-        if action_mask is None:
-            env_mask = torch.ones(B, Q, num_cores + 1, dtype=torch.bool, device=device)
-        else:
-            env_mask = action_mask if action_mask.dim() == 3 else action_mask.unsqueeze(0)
-            # TODO:why was this line added in the first place?
-            #bound_embeds = bound_embeds.masked_fill(~env_mask.unsqueeze(-1), 0)
-
-        if adj_matrix is None:
-            adj_matrix = torch.zeros(B, Q, Q, device=device, dtype=bound_embeds.dtype)
-        elif adj_matrix.dim() == 2:
-            adj_matrix = adj_matrix.unsqueeze(0)
-
-        # Build pairs
-        pair_mask = torch.triu(adj_matrix, diagonal=1) > 0
-        b_idx, q1, q2 = torch.where(pair_mask)
-
-        # keep only pairs whose first qubit is unassigned 
-        unassigned = current_core_allocs[b_idx, q1] == num_cores
-        b_idx_p, q1, q2 = b_idx[unassigned], q1[unassigned], q2[unassigned]
-        # TODO: here we sum the embeddings of the two qubits; we could also concatenate and reproject them
-        pair_agents = bound_embeds[b_idx_p, q1] + bound_embeds[b_idx_p, q2]
-
-        # singletons
-        is_used = torch.zeros((B, Q), dtype=torch.bool, device=device)
-        is_used[b_idx_p, q1] = True
-        is_used[b_idx_p, q2] = True
-        b_idx_s, q_s = torch.where(~is_used)
-        single_agents = bound_embeds[b_idx_s, q_s]
-
-        # action mask: 
-        pair_action_mask = env_mask[b_idx_p, q1] if pair_agents.numel() > 0 else bound_embeds.new_zeros((0, num_cores + 1), dtype=torch.bool)
-        single_action_mask = env_mask[b_idx_s, q_s] if single_agents.numel() > 0 else bound_embeds.new_zeros((0, num_cores + 1), dtype=torch.bool)
-
-        # counts per batch (B=1 in current use, but we keep general padding)
-        pair_counts = torch.bincount(b_idx_p, minlength=B).to(device)
-        single_counts = torch.bincount(b_idx_s, minlength=B).to(device)
-        agent_counts = pair_counts + single_counts
-        max_agents = int(agent_counts.max().item()) if agent_counts.numel() > 0 else 0
-
-        agent_embeds = bound_embeds.new_zeros(B, max_agents, num_cores, D)
-        agent_demands = bound_embeds.new_zeros(B, max_agents)
-        final_action_mask = torch.zeros(B, max_agents, num_cores + 1, dtype=torch.bool, device=device)
-
-        if max_agents == 0:
-            agent_mask = agent_demands > 0
-            return agent_embeds, agent_mask, agent_demands, final_action_mask
-
-        if pair_agents.numel() > 0:
-            pair_pos = self._batch_positions(b_idx_p, pair_counts)
-            agent_embeds[b_idx_p, pair_pos] = pair_agents
-            agent_demands[b_idx_p, pair_pos] = 2.0
-            final_action_mask[b_idx_p, pair_pos] = pair_action_mask
-
-        if single_agents.numel() > 0:
-            single_pos = self._batch_positions(b_idx_s, single_counts)
-            final_pos = single_pos + pair_counts.to(single_pos.device)[b_idx_s]
-            agent_embeds[b_idx_s, final_pos] = single_agents
-            agent_demands[b_idx_s, final_pos] = 1.0
-            final_action_mask[b_idx_s, final_pos] = single_action_mask
-
-        # TODO: Is this really needed?
-        agent_mask = agent_demands > 0 
+        agent_embeds, agent_mask, agent_demands, final_action_mask, _, _ = self.group_qubits_to_agents(
+            qubit_embeds,
+            adj_matrix=adj_matrix,
+            prev_core_allocs=prev_core_allocs,
+            current_core_allocs=current_core_allocs,
+            core_connectivity=core_connectivity,
+            action_mask=action_mask,
+            q_to_agent=q_to_agent,
+            max_agents=max_agents,
+        )
 
         return agent_embeds, agent_mask, agent_demands, final_action_mask
     

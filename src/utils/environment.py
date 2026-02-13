@@ -1,6 +1,7 @@
 from typing import Optional, Tuple
 import torch
 from .customtypes import Circuit, Hardware
+from .mapping import map_qubit_to_agent, map_agent_to_qubit
 
 
 
@@ -192,42 +193,13 @@ class MAQubitAllocationEnvironment(QubitAllocationEnvironment):
   def map_qubit_to_agent(self, tensor: torch.Tensor, reducer: str = 'mean') -> Tuple[torch.Tensor, int, int]:
     """Map qubit-dim -> padded agent-dim (mean/any/all over members)"""
     q_to_agent, num_agents, max_agents = self.agent_mapping
-    q_dim = next(i for i, s in enumerate(tensor.shape) if s == self.circuit.n_qubits)
-    idx = q_to_agent.view([1]*q_dim + [-1] + [1]*(tensor.ndim-q_dim-1))
-    idx = idx.expand(*tensor.shape[:q_dim], -1, *tensor.shape[q_dim+1:])
-    out_shape = list(tensor.shape)
-    out_shape[q_dim] = max_agents
-
-    if reducer in ('any', 'all'):
-      # Use integer accumulation; scatter_add_ does not support bool destination.
-      out = torch.zeros(out_shape, device=tensor.device, dtype=torch.int)
-      out.scatter_add_(q_dim, idx, tensor.to(torch.int))
-      counts = torch.bincount(q_to_agent, minlength=max_agents).to(tensor.device).clamp_min(1)
-      shape = [1]*tensor.ndim
-      shape[q_dim] = -1
-      if reducer == 'any':
-        out = out > 0
-      else:  # all
-        out = out == counts.view(shape)
-      return out, num_agents, max_agents
-
-    out = torch.zeros(out_shape, device=tensor.device, dtype=tensor.dtype)
-    out.scatter_add_(q_dim, idx, tensor)
-    if reducer == 'mean':
-      counts = torch.bincount(q_to_agent, minlength=max_agents).to(tensor.device).clamp_min(1)
-      shape = [1]*tensor.ndim
-      shape[q_dim] = -1
-      out = out / counts.view(shape)
-    return out, num_agents, max_agents
+    return map_qubit_to_agent(tensor, q_to_agent, max_agents, reducer)
   
   
   def map_agent_to_qubit(self, tensor: torch.Tensor) -> Tuple[torch.Tensor, int, int]:
     """Map agent-dim -> qubit-dim (broadcast)"""
     q_to_agent, num_agents, max_agents = self.agent_mapping
-    a_dim = next(i for i, s in enumerate(tensor.shape) if s == max_agents)
-    idx = q_to_agent.view([1]*a_dim + [-1] + [1]*(tensor.ndim-a_dim-1))
-    idx = idx.expand(*tensor.shape[:a_dim], -1, *tensor.shape[a_dim+1:])
-    return torch.gather(tensor, a_dim, idx), num_agents, max_agents
+    return map_agent_to_qubit(tensor, q_to_agent, max_agents)
   
   
   def _agent_mapping(self) -> tuple[torch.Tensor, int, int]:

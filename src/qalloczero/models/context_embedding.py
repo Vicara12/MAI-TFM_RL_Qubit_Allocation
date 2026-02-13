@@ -24,6 +24,7 @@ class QAContextEmbedding(nn.Module):
         num_communication_layers: int = 1,
         use_final_norm: bool = False,
         distance_matrix: torch.Tensor = None,
+        concat_max_members: int = 2,
         **communication_layer_kwargs,
     ):
         super().__init__()
@@ -35,7 +36,8 @@ class QAContextEmbedding(nn.Module):
         self.grouper = DynamicAgentGrouper(
             max_qubits=max_qubits, 
             embed_dim=embed_dim, 
-            distance_matrix=distance_matrix
+            distance_matrix=distance_matrix,
+            concat_max_members=concat_max_members,
         )
 
         self.core_feature_enc = CoreFeatureEncoder(
@@ -95,6 +97,8 @@ class QAContextEmbedding(nn.Module):
             core_connectivity: torch.Tensor = None,
             adj_matrix: torch.Tensor = None,
             action_mask: torch.Tensor = None,
+            q_to_agent: torch.Tensor = None,
+            max_agents: int = None,
         ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         
         # Gather the agent embeddings
@@ -107,7 +111,9 @@ class QAContextEmbedding(nn.Module):
             current_core_allocs=current_core_allocs,
             core_connectivity=core_connectivity,
             adj_matrix=adj_matrix,
-            action_mask=action_mask)  # [B, Q, d] -> [B, Agents, C, d]
+            action_mask=action_mask,
+            q_to_agent=q_to_agent,
+            max_agents=max_agents)  # [B, Q, d] -> [B, Agents, C, d]
 
         # Gather core embeddings (capacity)
         core_embeds = self.core_feature_enc(core_capacities, core_size=core_size)  # [B, C, d]

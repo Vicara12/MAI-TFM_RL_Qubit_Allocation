@@ -53,6 +53,8 @@ class MAPredictionModel(torch.nn.Module):
       core_connectivity: torch.Tensor,
       adj_matrix: torch.Tensor,
       action_mask: torch.Tensor,
+      q_to_agent: torch.Tensor | None = None,
+      max_agents: int | None = None,
   ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
     agent_embeds, agent_mask, _, final_action_mask = self.context_embds(
@@ -64,6 +66,8 @@ class MAPredictionModel(torch.nn.Module):
       core_connectivity,
       adj_matrix,
       action_mask,
+      q_to_agent=q_to_agent,
+      max_agents=max_agents,
     )
 
     logits, final_mask = self.decoder(agent_embeds, final_action_mask, agent_mask)
