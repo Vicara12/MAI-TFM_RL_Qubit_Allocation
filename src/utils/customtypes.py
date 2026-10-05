@@ -264,6 +264,30 @@ class Hardware:
     assert torch.all(self.core_connectivity == self.core_connectivity.T), \
       "Core connectivity matrix should be symmetric"
 
+  @staticmethod
+  def connectivityToDistance(conn: torch.Tensor, normalize: bool = True) -> torch.Tensor:
+    if conn.dim() < 2 or conn.shape[-1] != conn.shape[-2]:
+      raise ValueError(f"Expected (..., C, C) square matrices, got shape {tuple(conn.shape)}")
+    if not torch.is_floating_point(conn):
+      conn = conn.to(torch.get_default_dtype())
+    if torch.isnan(conn).any() or (conn < 0).any():
+      raise ValueError("Entries must be non-negative real numbers")
+ 
+    C = conn.shape[-1]
+    D = conn
+    eye = torch.eye(C, dtype=torch.bool, device=conn.device)
+    D = D.masked_fill(eye, 0.0)
+ 
+    # Floyd-Warshall, vectorised over (batch, i, j): O(C^3) time.
+    # Out-of-place updates keep autograd working.
+    for k in range(C):
+      D = torch.minimum(D, D[..., :, k:k + 1] + D[..., k:k + 1, :])
+
+    if normalize:
+      return D/D.max()
+    return D
+
+
   
   @property
   def n_cores(self):

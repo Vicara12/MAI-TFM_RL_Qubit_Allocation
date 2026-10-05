@@ -8,7 +8,7 @@ from utils.customtypes import Circuit
 import torch
 from time import time
 from random import randint
-from sampler.hardwaresampler import HardwareSampler
+from sampler.hardwaresampler import MultiTopologyHardwareSampler
 from sampler.randomcircuit import RandomCircuit
 from sampler.mixedcircuitsampler import MixedCircuitSampler
 from qalloczero.alg.directalloc import DirectAllocator, DAConfig
@@ -109,5 +109,25 @@ def scalingTest(compute: bool):
     cores_data = _loadData('data/core_scaling.json')
 
 
+def topologyTest(compute: bool):
+    if compute:
+        n_circs = 10
+        n_qubits = 64
+        n_cores = 8
+        n_slices = 32
+        name = 'da_v2_ft'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        allocator_seq = DirectAllocator.load(f'trained/{name}', device, checkpoint=-1).set_mode(DirectAllocator.Mode.Sequential)
+        allocator_par = DirectAllocator.load(f'trained/{name}', device, checkpoint=-1).set_mode(DirectAllocator.Mode.Parallel)
+        hws = MultiTopologyHardwareSampler(n_qubits, range_ncores=[n_cores, n_cores])
+        topology_names = ['all2all', 'linear', 'star', 'ring', 'grid']
+        results = {}
+        for tn in topology_names:
+            hw = hws.sample()
+            results[tn] = _scalingWorker(hw, n_circs, n_cores, n_slices, allocator_seq, allocator_par)  
+        _saveData(results, 'data/topology_study.json')
+    topology_data = _loadData('data/topology_data.json')
+
 if __name__ == '__main__':
-    scalingTest(compute=True)
+    # scalingTest(compute=True)
+    topologyTest(compute=True)
