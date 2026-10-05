@@ -5,6 +5,7 @@ docs/test_doc
 .vscode
 **/__pycache__/**
 venv
+.venv
 misc
 **/build/**
 allocation.svg
