@@ -1,6 +1,7 @@
 import json
 import os
 import pandas as pd
+from contextlib import contextmanager
 # from main import show_arch_comp_results, get_results_from_folder
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
@@ -15,30 +16,87 @@ from qalloczero.alg.directalloc import DirectAllocator, DAConfig
 from qalloczero.scripts.test_compare import validate, benchmark, compare_w_sota
 from qalloczero.alg.ts import ModelConfigs
 from utils.customtypes import Hardware
+from collections import defaultdict
+
+
+def _read_status_kb(field):
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith(field + ":"):
+                return int(line.split()[1])
+    raise RuntimeError(f"{field} not found in /proc/self/status")
+
+
+@contextmanager
+def track_peak_memory(device=None):
+    """Exact peak RAM (kernel-tracked) and peak VRAM (PyTorch) inside a with-block.
+
+    Yields a dict that is filled in when the block exits:
+        ram_peak            peak resident memory of this process
+        ram_delta           peak minus RSS at block entry
+        vram_peak           peak memory held by PyTorch tensors (CUDA only)
+        vram_delta          peak minus allocation at block entry (CUDA only)
+        vram_reserved_peak  peak memory held by PyTorch's cache (CUDA only)
+
+    Not safe to nest: an inner block resets the counter the outer block relies on.
+    """
+    stats = {}
+    # Tells the kernel to reset this process's peak-RSS counter (VmHWM) to the current RSS.
+    with open("/proc/self/clear_refs", "w") as f:
+        f.write("5")
+    ram_start = _read_status_kb("VmRSS") * 1024
+    _HAS_CUDA = torch.cuda.is_available()
+
+    if _HAS_CUDA:
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+        vram_start = torch.cuda.memory_allocated(device)
+
+    try:
+        yield stats
+    finally:
+        ram_peak = _read_status_kb("VmHWM") * 1024
+        stats["ram_peak"] = ram_peak
+        stats["ram_delta"] = (ram_peak - ram_start)
+        if _HAS_CUDA:
+            torch.cuda.synchronize(device)
+            vram_peak = torch.cuda.max_memory_allocated(device)
+            stats["vram_peak"] = vram_peak
+            stats["vram_delta"] = (vram_peak - vram_start)
+            stats["vram_reserved_peak"] = torch.cuda.max_memory_reserved(device)
 
 
 def _scalingWorker(hardware, n_circs, nq, d, allocator_seq, allocator_par):
-    data = {}
+    data = {'seq': defaultdict(list), 'par': defaultdict(list)}
     circ_sampler = RandomCircuit(num_lq=nq, num_slices=d)
     da_cfg = DAConfig()
-    data['costs_seq'] = []
-    data['costs_par'] = []
-    data['times_seq'] = []
-    data['times_par'] = []
     for i in range(n_circs):
         print(f"{i},", end='', flush=True)
         circ = circ_sampler.sample()
-        t0 = time()
-        cost_seq = allocator_seq.optimize(circ, cfg=da_cfg, hardware=hardware)[1]
-        t1 = time()
-        cost_par = allocator_par.optimize(circ, cfg=da_cfg, hardware=hardware)[1]
-        t2 = time()
-        data['costs_seq'].append(cost_seq/(circ.n_gates + 1))
-        data['times_seq'].append(t1-t0)
-        data['costs_par'].append(cost_par/(circ.n_gates + 1))
-        data['times_par'].append(t2-t1)
+        with track_peak_memory() as mem_seq:
+            t0 = time()
+            cost_seq = allocator_seq.optimize(circ, cfg=da_cfg, hardware=hardware)[1]
+            t1 = time()
+        data['seq']['costs'].append(cost_seq/(circ.n_gates + 1))
+        data['seq']['times'].append(t1-t0)
+        data['seq']['ram_peak'].append(mem_seq['ram_peak'])
+        data['seq']['ram_delta'].append(mem_seq['ram_delta'])
+        data['seq']['vram_peak'].append(mem_seq['vram_peak'])
+        data['seq']['vram_delta'].append(mem_seq['vram_delta'])
+        data['seq']['vram_reserved_peak'].append(mem_seq['vram_reserved_peak'])
+        with track_peak_memory() as mem_par:
+            t2 = time()
+            cost_par = allocator_par.optimize(circ, cfg=da_cfg, hardware=hardware)[1]
+            t3 = time()
+        data['par']['costs'].append(cost_par/(circ.n_gates + 1))
+        data['par']['times'].append(t3-t2)
+        data['par']['ram_peak'].append(mem_par['ram_peak'])
+        data['par']['ram_delta'].append(mem_par['ram_delta'])
+        data['par']['vram_peak'].append(mem_par['vram_peak'])
+        data['par']['vram_delta'].append(mem_par['vram_delta'])
+        data['par']['vram_reserved_peak'].append(mem_par['vram_reserved_peak'])
     print()
-    return data
+    return dict(data)
 
 
 def _saveData(data, name):
@@ -107,6 +165,7 @@ def scalingTest(compute: bool):
     depth_data = _loadData('data/depth_scaling.json')
     qubits_data = _loadData('data/qubit_scaling.json')
     cores_data = _loadData('data/core_scaling.json')
+    # TODO
 
 
 def topologyTest(compute: bool):
@@ -127,6 +186,7 @@ def topologyTest(compute: bool):
             results[tn] = _scalingWorker(hw, n_circs, n_cores, n_slices, allocator_seq, allocator_par)  
         _saveData(results, 'data/topology_study.json')
     topology_data = _loadData('data/topology_data.json')
+    # TODO
 
 if __name__ == '__main__':
     # scalingTest(compute=True)
